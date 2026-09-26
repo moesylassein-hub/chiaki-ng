@@ -55,7 +55,7 @@ public:
     void ConnectPsnConnection(StreamSession *session, const QString &duid, const bool &ps5);
 
 signals:
-    void resultReady(const ChiakiErrorCode &err);
+    void resultReady(StreamSession *session, const ChiakiErrorCode &err);
 };
 
 #ifdef CHIAKI_HAVE_WEBENGINE
@@ -160,7 +160,7 @@ public:
     void psnSessionStart();
     void startSession(bool emit_session_changed = true);
 
-    void checkPsnConnection(const ChiakiErrorCode &err);
+    void checkPsnConnection(StreamSession *source, const ChiakiErrorCode &err);
 
     void checkNickname(QString nickname);
 

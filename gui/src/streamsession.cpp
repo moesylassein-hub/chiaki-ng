@@ -13,6 +13,7 @@
 
 #include <QKeyEvent>
 #include <QMutexLocker>
+#include <QPointer>
 #include <QtMath>
 #include <atomic>
 
@@ -36,6 +37,7 @@
 #define PS5_TOUCHPAD_MAX_X 1919.0f
 #define PS5_TOUCHPAD_MAX_Y 1079.0f
 #define SESSION_RETRY_SECONDS 20
+#define SESSION_RETRY_DELAY_MS 1000
 #define HAPTIC_RUMBLE_MIN_STRENGTH 100
 
 #define MICROPHONE_SAMPLES 480
@@ -386,6 +388,17 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	rumble_haptics_connected(false),
 	rumble_haptics_on(false)
 {
+	retry_timer.setSingleShot(true);
+	connect(&retry_timer, &QTimer::timeout, this, [this]() {
+		if (stop_requested)
+			return;
+		try {
+			Start();
+		} catch (const Exception &e) {
+			connect_timer.invalidate();
+			emit SessionQuit(CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, QString::fromUtf8(e.what()));
+		}
+	});
 	mic_buf.buf = nullptr;
 	connected = false;
 	muted = true;
@@ -428,6 +441,8 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 		{
 			QString log = QString::fromUtf8(chiaki_log_sniffer_get_buffer(&sniffer));
 			chiaki_log_sniffer_fini(&sniffer);
+			delete ffmpeg_decoder;
+			ffmpeg_decoder = nullptr;
 			throw ChiakiException("Failed to initialize FFMPEG Decoder:\n" + log);
 		}
 		chiaki_log_sniffer_fini(&sniffer);
@@ -698,7 +713,18 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 
 StreamSession::~StreamSession()
 {
+	retry_timer.stop();
+	stop_requested = true;
+	emit FfmpegDecoderClosing();
+	log.PrepareShutdown();
 	mic_active.storeRelaxed(false);
+	// Stop producers before closing audio devices and freeing decoder resources.
+	if(session_started)
+	{
+		chiaki_session_stop(&session);
+		chiaki_session_join(&session);
+		session_started = false;
+	}
 	StopAudioOutDrainThread();
 	if(audio_out)
 		SDL_CloseAudioDevice(audio_out);
@@ -717,12 +743,6 @@ StreamSession::~StreamSession()
 	StopSdeckHaptics();
 #endif
 
-	// Prepare log for shutdown BEFORE joining session threads
-	// This prevents crashes from log callbacks during shutdown
-	log.PrepareShutdown();
-
-	if(session_started)
-		chiaki_session_join(&session);
 	chiaki_session_fini(&session);
 	chiaki_opus_decoder_fini(&opus_decoder);
 	chiaki_opus_encoder_fini(&opus_encoder);
@@ -800,8 +820,11 @@ StreamSession::~StreamSession()
 
 void StreamSession::Start()
 {
+	if (stop_requested || session_started)
+		return;
 	if(!connect_timer.isValid())
 		connect_timer.start();
+	session.quit_reason = CHIAKI_QUIT_REASON_NONE;
 	ChiakiErrorCode err = chiaki_session_start(&session);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
@@ -812,8 +835,16 @@ void StreamSession::Start()
 
 void StreamSession::Stop()
 {
+	if (stop_requested)
+		return;
+	stop_requested = true;
+	const bool waiting_for_retry = retry_timer.isActive();
+	retry_timer.stop();
+	connect_timer.invalidate();
 	mic_active.storeRelaxed(false);
 	chiaki_session_stop(&session);
+	if (waiting_for_retry)
+		emit SessionQuit(CHIAKI_QUIT_REASON_STOPPED, QString());
 }
 
 void StreamSession::GoToBed()
@@ -1188,9 +1219,12 @@ void StreamSession::UpdateGamepads()
 			{
 				haptics_handheld--;
 			}
-			QTimer::singleShot(1000, this, [this, controller] {
-				controller->ChangePlayerIndex(player_index);
-				controller->ChangeLEDColor(led_color);
+			QPointer<Controller> pending_controller(controller);
+			QTimer::singleShot(1000, this, [this, pending_controller] {
+				if (!pending_controller || !pending_controller->IsConnected())
+					return;
+				pending_controller->ChangePlayerIndex(player_index);
+				pending_controller->ChangeLEDColor(led_color);
 			});
 			if (controller->IsDualSense() || controller->IsDualSenseEdge())
 			{
@@ -2329,20 +2363,42 @@ void StreamSession::Event(ChiakiEvent *event)
 	switch(event->type)
 	{
 		case CHIAKI_EVENT_CONNECTED:
-			connect_timer.invalidate();
-			connected = true;
-			emit ConnectedChanged();
+			QMetaObject::invokeMethod(this, [this]() {
+				if (stop_requested)
+					return;
+				connect_timer.invalidate();
+				connected = true;
+				emit ConnectedChanged();
+			}, Qt::QueuedConnection);
 			break;
-		case CHIAKI_EVENT_QUIT:
-			if(!connected && !holepunch_session && chiaki_quit_reason_is_error(event->quit.reason) && connect_timer.elapsed() < SESSION_RETRY_SECONDS * 1000)
-			{
-				QTimer::singleShot(SESSION_RETRY_SECONDS / 3, this, &StreamSession::Start);
-				return;
-			}
-			connected = false;
-			emit ConnectedChanged();
-			emit SessionQuit(event->quit.reason, event->quit.reason_str ? QString::fromUtf8(event->quit.reason_str) : QString());
+		case CHIAKI_EVENT_QUIT: {
+			const ChiakiQuitReason reason = event->quit.reason;
+			const QString reason_str = event->quit.reason_str ? QString::fromUtf8(event->quit.reason_str) : QString();
+			QMetaObject::invokeMethod(this, [this, reason, reason_str]() {
+				// This runs on the GUI thread, after the worker's quit callback.
+				// Join before reusing the session thread handle on a retry.
+				if (session_started)
+				{
+					chiaki_session_join(&session);
+					session_started = false;
+				}
+				// Only retry a refused connection (e.g. a console still waking).
+				// Authentication and established-stream failures require user action.
+				if (!stop_requested && !connected && !holepunch_session
+					&& reason == CHIAKI_QUIT_REASON_SESSION_REQUEST_CONNECTION_REFUSED
+					&& connect_timer.isValid()
+					&& connect_timer.elapsed() + SESSION_RETRY_DELAY_MS < SESSION_RETRY_SECONDS * 1000)
+				{
+					retry_timer.start(SESSION_RETRY_DELAY_MS);
+					return;
+				}
+				connect_timer.invalidate();
+				connected = false;
+				emit ConnectedChanged();
+				emit SessionQuit(stop_requested ? CHIAKI_QUIT_REASON_STOPPED : reason, reason_str);
+			}, Qt::QueuedConnection);
 			break;
+		}
 		case CHIAKI_EVENT_REGIST:
 			emit AutoRegistSucceeded(event->host);
 			break;
@@ -2746,7 +2802,8 @@ ChiakiErrorCode StreamSession::ConnectPsnConnection(QString duid, bool ps5)
 
 void StreamSession::CancelPsnConnection(bool stop_thread)
 {
-	chiaki_holepunch_main_thread_cancel(holepunch_session, stop_thread);
+	if (holepunch_session)
+		chiaki_holepunch_main_thread_cancel(holepunch_session, stop_thread);
 }
 
 void StreamSession::TriggerFfmpegFrameAvailable()

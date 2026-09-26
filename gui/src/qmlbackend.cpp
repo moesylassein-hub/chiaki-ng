@@ -2,6 +2,8 @@
 #include "qmlsettings.h"
 #include "qmlmainwindow.h"
 #include "streamsession.h"
+#include "sessionresource.h"
+#include <memory>
 #include "controllermanager.h"
 #include "psnaccountid.h"
 #include "psntoken.h"
@@ -487,6 +489,8 @@ QmlBackend::~QmlBackend()
 {
     if(session)
     {
+        // Wake the PSN worker before waiting for it during application shutdown.
+        session->CancelPsnConnection(true);
         chiaki_log_mutex.lock();
         chiaki_log_ctx = nullptr;
         chiaki_log_mutex.unlock();
@@ -851,11 +855,14 @@ bool QmlBackend::autoConnect() const
 
 void QmlBackend::psnCancel(bool stop_thread)
 {
-    session->CancelPsnConnection(stop_thread);
+    if (session)
+        session->CancelPsnConnection(stop_thread);
 }
 
-void QmlBackend::checkPsnConnection(const ChiakiErrorCode &err)
+void QmlBackend::checkPsnConnection(StreamSession *source, const ChiakiErrorCode &err)
 {
+    if (!session || session != source)
+        return;
     switch(err)
     {
         case CHIAKI_ERR_SUCCESS:
@@ -908,6 +915,8 @@ void QmlBackend::psnSessionStart()
 
 void QmlBackend::startSession(bool emit_session_changed)
 {
+    if (!session)
+        return;
     if (window)
         window->armVerbosePlaceboQuietWindow();
 
@@ -929,6 +938,9 @@ void QmlBackend::startSession(bool emit_session_changed)
             window->requestOverlayUpdate();
         }
         failed_session->deleteLater();
+        sleep_inhibit->release();
+        setDiscoveryEnabled(true);
+        window->setWindowAdjustable(true);
         emit error(tr("Stream failed"), tr("Failed to start Stream Session: %1").arg(e.what()));
         return;
     }
@@ -1100,50 +1112,63 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
     try {
         session = new StreamSession(session_info, this);
     } catch (const Exception &e) {
+        wakeup_nickname.clear();
+        window->setWindowAdjustable(true);
+        setDiscoveryEnabled(true);
         emit error(tr("Stream failed"), tr("Failed to initialize Stream Session: %1").arg(e.what()));
         return;
     }
 
-    connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(), [this, use_opengl_renderer]() {
-        ChiakiFfmpegDecoder *decoder = session->GetFfmpegDecoder();
-        if (!decoder) {
-            qCCritical(chiakiGui) << "Session has no FFmpeg decoder";
-            return;
-        }
-        int32_t frames_lost;
-        ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
-        if (!frame.frame)
-            return;
-        logDecoderDeliveryStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frames_lost, frame.recovered);
-        logDecoderFramePtsStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frame.pts, frame.duration);
-        if (frame.recovered)
-            pending_recovered_frame.storeRelaxed(1);
+    StreamSession *session_for_connections = session;
+    auto frame_resource = std::make_shared<SessionResource<ChiakiFfmpegDecoder>>(session->GetFfmpegDecoder());
+    connect(session, &StreamSession::FfmpegDecoderClosing, this, [frame_resource]() {
+        frame_resource->Close();
+    }, Qt::DirectConnection);
+    connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(),
+            [this, use_opengl_renderer, frame_resource, session_for_connections]() {
+        frame_resource->Use([&](ChiakiFfmpegDecoder *decoder) {
+            int32_t frames_lost;
+            ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
+            if (!frame.frame)
+                return;
+            logDecoderDeliveryStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frames_lost, frame.recovered);
+            logDecoderFramePtsStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frame.pts, frame.duration);
+            if (frame.recovered)
+                pending_recovered_frame.storeRelaxed(1);
 
-        const qint64 prepare_begin_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        if (!prepareFrameForPresentation(frame, use_opengl_renderer))
-        {
-            av_frame_free(&frame.frame);
-            return;
-        }
-        const qint64 prepare_end_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        if (prepare_end_us >= prepare_begin_us && prepare_end_us - prepare_begin_us >= 5000) {
-            CHIAKI_NOISY_DEBUG().nospace()
-                << "[decode] prepare_frame_us=" << (prepare_end_us - prepare_begin_us)
-                << " pts=" << frame.pts;
-        }
+            const qint64 prepare_begin_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            if (!prepareFrameForPresentation(frame, use_opengl_renderer))
+            {
+                av_frame_free(&frame.frame);
+                return;
+            }
+            const qint64 prepare_end_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            if (prepare_end_us >= prepare_begin_us && prepare_end_us - prepare_begin_us >= 5000) {
+                CHIAKI_NOISY_DEBUG().nospace()
+                    << "[decode] prepare_frame_us=" << (prepare_end_us - prepare_begin_us)
+                    << " pts=" << frame.pts;
+            }
 
-        if (pending_recovered_frame.fetchAndStoreRelaxed(0) != 0) {
-            frame.recovered = true;
-        }
+            if (pending_recovered_frame.fetchAndStoreRelaxed(0) != 0) {
+                frame.recovered = true;
+            }
 
-        const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        QmlMainWindow *target_window = window;
-        QMetaObject::invokeMethod(target_window, [target_window, frame, frames_lost, delivery_us]() mutable {
-            target_window->presentFrame(frame, frames_lost, delivery_us);
+            const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            QmlMainWindow *target_window = window;
+            // Own queued frames even if the receiver is destroyed before delivery.
+            auto owned_frame = std::shared_ptr<AVFrame>(frame.frame, [](AVFrame *f) { av_frame_free(&f); });
+            QMetaObject::invokeMethod(this, [this, target_window, frame, owned_frame, frame_resource,
+                                          session_for_connections, frames_lost, delivery_us]() mutable {
+                if (session != session_for_connections || !frame_resource->IsOpen())
+                    return;
+                // presentFrame takes ownership; the queued event keeps its own reference.
+                frame.frame = av_frame_clone(owned_frame.get());
+                if (frame.frame)
+                    target_window->presentFrame(frame, frames_lost, delivery_us);
+            });
         });
     });
 
-    StreamSession *session_for_connections = session;
     connect(session, &StreamSession::SessionQuit, this, [this, session_for_connections](ChiakiQuitReason reason, const QString &reason_str) {
         if (session != session_for_connections)
             return;
@@ -1180,7 +1205,9 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
 #endif
     });
 
-    connect(session, &StreamSession::LoginPINRequested, this, [this, connect_info](bool incorrect) {
+    connect(session, &StreamSession::LoginPINRequested, this, [this, connect_info, session_for_connections](bool incorrect) {
+        if (session != session_for_connections)
+            return;
         if (!connect_info.initial_login_pin.isEmpty() && incorrect == false)
             session->SetLoginPIN(connect_info.initial_login_pin);
         else
@@ -1282,7 +1309,7 @@ void QmlBackend::wakeUpHost(int index, QString nickname)
     if (!nickname.isEmpty())
     {
         waking_sleeping_nicknames.append(nickname);
-        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this, nickname]{
+        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
             waking_sleeping_nicknames.removeOne(nickname);
             emit hostsChanged();
         });
@@ -1516,7 +1543,8 @@ void QmlBackend::setWebEngineHints(QQuickWebEngineProfile *profile)
 
 void QmlBackend::connectToHost(int index, QString nickname)
 {
-    window->setWindowAdjustable(false);
+    if (session)
+        return;
     auto server = displayServerAt(index);
     if (!server.valid)
         return;
@@ -1527,6 +1555,7 @@ void QmlBackend::connectToHost(int index, QString nickname)
         return;
     }
 
+    window->setWindowAdjustable(false);
     if (server.discovered && server.discovery_host.state == CHIAKI_DISCOVERY_HOST_STATE_STANDBY)
     {
         const QString wake_host = server.GetHostAddr();
@@ -1540,11 +1569,10 @@ void QmlBackend::connectToHost(int index, QString nickname)
         }
         if(nickname.isEmpty())
         {
-            qCWarning(chiakiGui) << "No nickname given for registered connection, not connecting...";
-            return;
+            nickname = server.registered_host.GetServerNickname();
         }
         waking_sleeping_nicknames.append(nickname);
-        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this, nickname]{
+        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
             waking_sleeping_nicknames.removeOne(nickname);
             emit hostsChanged();
         });
@@ -1611,7 +1639,11 @@ void QmlBackend::connectToHost(int index, QString nickname)
         QString expiry_s = settings->GetPsnAuthTokenExpiry();
         QString refresh = settings->GetPsnRefreshToken();
         if(expiry_s.isEmpty() || refresh.isEmpty())
+        {
+            window->setWindowAdjustable(true);
+            emit error(tr("PSN sign-in required"), tr("Sign in to PlayStation Network in Settings, then connect again."));
             return;
+        }
         QDateTime expiry = QDateTime::fromString(expiry_s, settings->GetTimeFormat());
         // give 1 minute buffer
         QDateTime now = QDateTime::currentDateTime().addSecs(60);
@@ -1619,7 +1651,8 @@ void QmlBackend::connectToHost(int index, QString nickname)
         {
             PSNToken *psnToken = new PSNToken(settings, this);
             connect(psnToken, &PSNToken::PSNTokenError, this, [this](const QString &error) {
-                qCWarning(chiakiGui) << "Could not refresh token. Automatic PSN Connection Unavailable!" << error;
+                window->setWindowAdjustable(true);
+                emit this->error(tr("PSN sign-in failed"), tr("Could not refresh your PSN sign-in: %1").arg(error));
             });
             connect(psnToken, &PSNToken::UnauthorizedError, this, &QmlBackend::psnCredsExpired);
             connect(psnToken, &PSNToken::PSNTokenSuccess, this, []() {
@@ -1645,8 +1678,9 @@ void QmlBackend::stopSession(bool sleep)
     if (!session_info.nickname.isEmpty())
     {
         waking_sleeping_nicknames.append(session_info.nickname);
-        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this]{
-            waking_sleeping_nicknames.removeOne(session_info.nickname);
+        const QString nickname = session_info.nickname;
+        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
+            waking_sleeping_nicknames.removeOne(nickname);
             emit hostsChanged();
         });
     }
@@ -1667,7 +1701,7 @@ void QmlBackend::sessionGoHome()
 
 void QmlBackend::enterPin(const QString &pin)
 {
-    qCInfo(chiakiGui) << "Set login pin " << pin;
+    qCInfo(chiakiGui) << "Setting console login PIN";
     if (session)
         session->SetLoginPIN(pin);
 }
@@ -1723,8 +1757,12 @@ void QmlBackend::stopAutoConnect()
             chiaki_log_ctx = nullptr;
             chiaki_log_mutex.unlock();
 
-            session->deleteLater();
+            if (session)
+                session->deleteLater();
             session = nullptr;
+            emit sessionChanged(nullptr);
+            setDiscoveryEnabled(true);
+            window->setWindowAdjustable(true);
         }
     }
     emit autoConnectChanged();
@@ -2340,7 +2378,7 @@ void QmlBackend::updateDiscoveryHosts()
                 QString nickname = host.host_name;
                 wakeup_nickname = nickname;
                 waking_sleeping_nicknames.append(nickname);
-                QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this, nickname]{
+                QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
                     waking_sleeping_nicknames.removeOne(nickname);
                     emit hostsChanged();
                 });
@@ -2658,5 +2696,5 @@ void QmlBackend::refreshPsnToken()
 void PsnConnectionWorker::ConnectPsnConnection(StreamSession *session, const QString &duid, const bool &ps5)
 {
     ChiakiErrorCode result = session->ConnectPsnConnection(duid, ps5);
-    emit resultReady(result);
+    emit resultReady(session, result);
 }
