@@ -49,6 +49,12 @@ Item {
         }
     }
 
+    Rectangle {
+        anchors.fill: parent
+        color: "#0b1018"
+        z: -1
+    }
+
     ToolBar {
         id: toolBar
         anchors {
@@ -56,7 +62,9 @@ Item {
             left: parent.left
             right: parent.right
         }
-        height: 80
+        height: 88
+        Material.background: "#0e1621"
+        Material.foreground: "white"
 
         RowLayout {
             anchors {
@@ -67,11 +75,12 @@ Item {
 
             Button {
                 Layout.fillHeight: true
-                Layout.preferredWidth: 100
+                Layout.preferredWidth: 88
                 flat: true
                 text: "❮"
+                font.pixelSize: 28
                 focusPolicy: Qt.NoFocus
-                Material.roundedScale: Material.SmallScale
+                Material.roundedScale: Material.MediumScale
                 onClicked: {
                     dialog.rejected();
                     dialog.close();
@@ -84,10 +93,10 @@ Item {
                 id: okButton
                 Layout.fillHeight: true
                 flat: true
-                padding: 30
-                font.pixelSize: 25
+                padding: 24
+                font.pixelSize: 20
                 focusPolicy: Qt.NoFocus
-                Material.roundedScale: Material.SmallScale
+                Material.roundedScale: Material.MediumScale
                 onClicked: dialog.accepted()
                 icon.source: "qrc:/icons/options.svg";
                 icon.width: 50
@@ -101,7 +110,8 @@ Item {
             horizontalAlignment: Qt.AlignHCenter
             verticalAlignment: Qt.AlignVCenter
             font.bold: true
-            font.pixelSize: 26
+            font.pixelSize: 24
+            color: "white"
         }
 
         Label {
@@ -115,7 +125,8 @@ Item {
             horizontalAlignment: Qt.AlignHCenter
             verticalAlignment: Qt.AlignVCenter
             font.bold: true
-            font.pixelSize: 14
+            font.pixelSize: 12
+            color: "#93a4b8"
         }
     }
 

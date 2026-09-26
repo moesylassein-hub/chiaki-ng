@@ -16,11 +16,19 @@ Dialog {
     y: Math.round((root.height - height) / 2)
     modal: true
     Material.roundedScale: Material.MediumScale
+    padding: 24
+    background: Rectangle {
+        radius: 18
+        color: "#121a25"
+        border.color: "#2a3a50"
+        border.width: 1
+    }
     onOpened: label.forceActiveFocus(Qt.TabFocusReason)
     onAccepted: {
         newDialogOpen = true;
         restoreFocus();
-        callback();
+        if (callback)
+            callback();
     }
     onClosed: if(!newDialogOpen) { restoreFocus() }
 
@@ -50,6 +58,9 @@ Dialog {
 
         Label {
             id: label
+            Layout.preferredWidth: Math.min(520, root.width - 96)
+            wrapMode: Text.Wrap
+            color: "white"
             Keys.onEscapePressed: dialog.reject()
             Keys.onReturnPressed: dialog.accept()
         }
