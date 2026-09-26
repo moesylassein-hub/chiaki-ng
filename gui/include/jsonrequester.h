@@ -30,7 +30,7 @@ private slots:
 
 private:
     void makeRequest(bool post, const QString& url, const QString& authHeader, QString contentType,
-                     QString body = nullptr);
+                     QString body = QString());
 
     QNetworkAccessManager* networkManager;
     QHash<QNetworkReply *, QString> currentReplies;
