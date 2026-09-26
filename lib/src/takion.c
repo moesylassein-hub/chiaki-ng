@@ -1419,9 +1419,9 @@ static void takion_handle_packet_message_data(ChiakiTakion *takion, uint8_t *pac
 
 static void takion_handle_packet_message_data_ack(ChiakiTakion *takion, uint8_t flags, uint8_t *buf, size_t buf_size)
 {
-	if(buf_size != 0xc)
+	if(buf_size < 0xc)
 	{
-		CHIAKI_LOGE(takion->log, "Takion received data ack with size %zx != %#x", buf_size, 0xc);
+		CHIAKI_LOGE(takion->log, "Takion received data ack with size %zx < %#x", buf_size, 0xc);
 		return;
 	}
 
@@ -1430,14 +1430,13 @@ static void takion_handle_packet_message_data_ack(ChiakiTakion *takion, uint8_t 
 	uint16_t gap_ack_blocks_count = ntohs(*((chiaki_unaligned_uint16_t *)(buf + 8)));
 	uint16_t dup_tsns_count = ntohs(*((chiaki_unaligned_uint16_t *)(buf + 0xa)));
 
-	if(buf_size != gap_ack_blocks_count * 4 + 0xc)
+	/* Each optional gap block and duplicate TSN occupies four bytes. */
+	size_t expected_size = 0xc + ((size_t)gap_ack_blocks_count + dup_tsns_count) * 4;
+	if(buf_size != expected_size)
 	{
-		CHIAKI_LOGW(takion->log, "Takion received data ack with invalid gap_ack_blocks_count");
+		CHIAKI_LOGW(takion->log, "Takion received data ack with invalid gap or duplicate counts");
 		return;
 	}
-
-	if(dup_tsns_count != 0)
-		CHIAKI_LOGW(takion->log, "Takion received data ack with nonzero dup_tsns_count %#x", dup_tsns_count);
 
 	CHIAKI_LOGV(takion->log, "Takion received data ack with cumulative_seq_num = %#x, a_rwnd = %#x, gap_ack_blocks_count = %#x, dup_tsns_count = %#x",
 			cumulative_seq_num, a_rwnd, gap_ack_blocks_count, dup_tsns_count);
