@@ -1,6 +1,7 @@
 #include "qmlmainwindow.h"
 #include "qmlbackend.h"
 #include "qmlsvgprovider.h"
+#include "exception.h"
 #include "chiaki/log.h"
 #include "chiaki/time.h"
 #include "streamsession.h"
@@ -4866,7 +4867,7 @@ void QmlMainWindow::init(Settings *settings, bool exit_app_on_stream_exit)
         render_backend = RenderBackend::OpenGL;
         setSurfaceType(QWindow::OpenGLSurface);
         if (!initOpenGLBackend())
-            qFatal("Failed initializing OpenGL backend");
+            throw Exception(tr("Neither Vulkan nor OpenGL could be initialized. Update your graphics driver, then try again.\n\nVulkan failure: %1\nOpenGL fallback also failed.").arg(reason));
     };
 
     struct pl_log_params log_params = {
@@ -5007,7 +5008,7 @@ vulkan_setup_done:
         ;
     } else {
         if (!initOpenGLBackend())
-            qFatal("Failed initializing OpenGL backend");
+            throw Exception(tr("OpenGL renderer initialization failed. Update your graphics driver or switch the renderer setting back to Vulkan."));
     }
 
     if (render_backend == RenderBackend::Vulkan) {
@@ -5215,7 +5216,7 @@ renderer_backend_ready:
 
     if (render_backend == RenderBackend::OpenGL) {
         if (!makeOpenGLContextCurrent())
-            qFatal("Failed to make QOpenGLContext current for render control initialization");
+            throw Exception(tr("OpenGL initialized, but its rendering context could not be activated. Try updating your graphics driver or switching to Vulkan."));
         quick_render->initialize();
         doneOpenGLContextCurrent();
     } else {

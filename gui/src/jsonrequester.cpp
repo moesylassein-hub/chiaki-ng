@@ -1,4 +1,5 @@
 #include "jsonrequester.h"
+#include <QJsonParseError>
 #include <QNetworkReply>
 #include <QNetworkRequest>
 #include <QTimer>
@@ -16,7 +17,7 @@ QString JsonRequester::generateBearerAuthHeader(QString bearerToken) {
 }
 
 QString JsonRequester::generateBasicAuthHeader(QString username, QString password) {
-    QString combined = QString("%1:%2").arg(username).arg(password);
+    const QString combined = username + QStringLiteral(":") + password;
     QString authHeader = "Basic " + combined.toUtf8().toBase64();
     return authHeader;
 }
@@ -27,12 +28,17 @@ void JsonRequester::makePostRequest(const QString& url, const QString& authHeade
 }
 
 void JsonRequester::makeGetRequest(const QString& url, const QString& authHeader, const QString contentType) {
-    makeRequest(false, url, authHeader, contentType, nullptr);
+    makeRequest(false, url, authHeader, contentType, QString());
 }
 
 void JsonRequester::makeRequest(bool post, const QString& url, const QString& authHeader, const QString contentType,
                                 const QString body) {
     QUrl q_url(url);
+    if (!q_url.isValid() || q_url.scheme().isEmpty()) {
+        emit requestError(url, QStringLiteral("Invalid request URL"), QNetworkReply::ProtocolInvalidOperationError);
+        return;
+    }
+
     QNetworkRequest request(q_url);
     request.setRawHeader("Authorization", authHeader.toUtf8());
     request.setRawHeader("Content-Type", contentType.toUtf8());
@@ -64,7 +70,16 @@ void JsonRequester::onRequestFinished(QNetworkReply* reply) {
 
     if (reply->error() == QNetworkReply::NoError) {
         const QByteArray data = reply->readAll();
-        const QJsonDocument jsonDocument = QJsonDocument::fromJson(data);
+        QJsonParseError parseError;
+        const QJsonDocument jsonDocument = QJsonDocument::fromJson(data, &parseError);
+
+        if (parseError.error != QJsonParseError::NoError) {
+            emit requestError(url,
+                              QStringLiteral("Invalid JSON response: %1").arg(parseError.errorString()),
+                              QNetworkReply::UnknownContentError);
+            reply->deleteLater();
+            return;
+        }
 
         emit requestFinished(url, jsonDocument);
     } else {

@@ -19,7 +19,10 @@ int main(int argc, char *argv[]) { return real_main(argc, argv); }
 #include <controllermanager.h>
 #include <discoverymanager.h>
 #include <qmlmainwindow.h>
+#include <exception.h>
 #include <QApplication>
+#include <QMessageBox>
+#include <QRegularExpression>
 #include <QtTypes>
 
 #ifdef CHIAKI_ENABLE_CLI
@@ -250,7 +253,6 @@ int real_main(int argc, char *argv[])
 				printf("Given morning has invalid size (expected %llu, got %" PRIdQSIZETYPE")\n",
 					(unsigned long long)sizeof(ChiakiConnectInfo::morning),
 					morning.length());
-				printf("Given morning has invalid size (expected %llu)", (unsigned long long)sizeof(ChiakiConnectInfo::morning));
 				return 1;
 			}
 		}
@@ -267,9 +269,10 @@ int real_main(int argc, char *argv[])
 		else
 		{
 			initial_login_passcode = parser.value(passcode_option);
-			if(initial_login_passcode.length() != 4)
+			static const QRegularExpression passcode_regex(QStringLiteral("^[0-9]{4}$"));
+			if(!passcode_regex.match(initial_login_passcode).hasMatch())
 			{
-				printf("Login passcode must be 4 digits. You entered %" PRIdQSIZETYPE "digits)\n", initial_login_passcode.length());
+				printf("Login passcode must contain exactly 4 numeric digits.\n");
 				return 1;
 			}
 		}
@@ -317,14 +320,30 @@ int real_main(int argc, char *argv[])
 
 int RunMain(QGuiApplication &app, Settings *settings, bool exit_app_on_stream_exit)
 {
-	QmlMainWindow main_window(settings, exit_app_on_stream_exit);
-	main_window.show();
-	return app.exec();
+	try
+	{
+		QmlMainWindow main_window(settings, exit_app_on_stream_exit);
+		main_window.show();
+		return app.exec();
+	}
+	catch(const Exception &e)
+	{
+		QMessageBox::critical(nullptr, QObject::tr("chiaki-ng could not start"), QString::fromLocal8Bit(e.what()));
+		return 1;
+	}
 }
 
 int RunStream(QGuiApplication &app, const StreamSessionConnectInfo &connect_info)
 {
-	QmlMainWindow main_window(connect_info);
-	main_window.show();
-	return app.exec();
+	try
+	{
+		QmlMainWindow main_window(connect_info);
+		main_window.show();
+		return app.exec();
+	}
+	catch(const Exception &e)
+	{
+		QMessageBox::critical(nullptr, QObject::tr("chiaki-ng could not start"), QString::fromLocal8Bit(e.what()));
+		return 1;
+	}
 }
