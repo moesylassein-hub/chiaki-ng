@@ -32,8 +32,6 @@ class SystemdInhibit;
 class QmlRegist : public QObject
 {
     Q_OBJECT
-    Q_PROPERTY(QString recoveryStatus READ recoveryStatus NOTIFY recoveryChanged)
-    Q_PROPERTY(bool recoveryActive READ recoveryActive NOTIFY recoveryChanged)
 
 public:
     QmlRegist(const ChiakiRegistInfo &regist_info, uint32_t log_mask, QObject *parent = nullptr);
@@ -82,6 +80,8 @@ private:
 class QmlBackend : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString recoveryStatus READ recoveryStatus NOTIFY recoveryChanged)
+    Q_PROPERTY(bool recoveryActive READ recoveryActive NOTIFY recoveryChanged)
     Q_PROPERTY(QmlMainWindow* window READ qmlWindow CONSTANT)
     Q_PROPERTY(QmlSettings* settings READ qmlSettings CONSTANT)
     Q_PROPERTY(StreamSession* session READ qmlSession NOTIFY sessionChanged)
