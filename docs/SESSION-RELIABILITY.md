@@ -83,3 +83,62 @@ git apply session-reliability.patch
 If any check fails, retain the session log and Windows crash details, plus the
 decoder/renderer settings and whether the connection was LAN or PSN. Those are
 needed to identify remaining faults. No claim of flawless operation is made.
+
+## Stream health and recovery
+
+Settings → Config contains **Automatically recover frozen or disconnected streams**
+(default on) and **Adaptive bitrate (experimental)** (default off). Adaptive bitrate
+is independent of freeze recovery and never changes the saved bitrate setting.
+It requires a brief reconnect because the protocol implementation negotiates the
+requested bitrate at connection time; this is not seamless in-stream rate control.
+
+After a 15-second connection grace period, missing video delivery/presentation for
+five seconds triggers a nonblocking decoder-lock attempt, decoder flush, fresh
+keyframe request and renderer queue reset. If frames remain absent for another
+five seconds, the entire session is stopped and destroyed before reconnecting.
+No callback or retry may reuse a retired session. Sleep, minimized windows,
+protected scenes and disabled video are excluded. The Raspberry Pi decoder is
+excluded from the FFmpeg video watchdog.
+
+Audio that previously arrived but then stops for ten seconds while video continues,
+or an SDL output device stopped for five seconds, uses the same bounded reconnect.
+Existing controller hotplug and stream-statistics support are retained.
+
+The status window explains the recovery stage, exposes **Cancel recovery**, and
+reports the outcome. Closing it while recovery is active cancels recovery. Retries
+wait 2, 4 and 6 seconds after session destruction, with a maximum of **three total
+reconnects per manually started session**, shared by recovery and adaptive bitrate.
+Authentication failures, intentional disconnection and console shutdown are not
+retried. A connection attempt times out after 45 seconds. Cancel/stop/suspend/profile
+changes invalidate pending reconnects, and automatic reconnection starts muted.
+
+Adaptive bitrate waits at least 30 seconds after connecting. Sustained loss of 3%
+for five seconds reduces the requested bitrate by 25%, down to 8 Mbps (or the
+original bitrate if lower). Two minutes at no more than 0.5% loss raises it by 10%
+of the original bitrate (at least 1 Mbps), capped at the original request. Network
+warnings appear independently of the adaptive setting. Turning this option off
+leaves the current session bitrate in place; the next manual connection uses the
+saved bitrate.
+
+Recovery diagnostics are automatically written to `recovery-latest.json` in the
+log directory and can be exported from Config or the recovery window. They contain
+at most 100 allowlisted events, timestamps, numeric stream statistics and outcomes.
+They intentionally exclude raw logs, credentials, account IDs, console names,
+addresses and controller identities. Existing session logs remain separate.
+
+A full minute of continuously healthy video records the video settings that
+launched that stream. Config can restore that snapshot (restart afterward).
+Two starts interrupted before a successful check cause the next launch to restore
+that snapshot, when available. Normal stops do not count as crashes. This detects
+unclean exits, not their cause, and does not replace account or controller settings.
+Existing profile management can hold separate quality and Discord configurations.
+
+### Validation and limits
+
+`test/session-lifecycle/health.cpp` covers startup grace, disabled automation,
+soft repair and escalation, resumed frames, intentional stream disabling, audio
+liveness, sustained-loss thresholds, bitrate bounds, stability hysteresis and sleep.
+Run it together with the session-resource lifetime tests. A Windows streaming test
+with induced loss, controller/audio unplugging, cancellation during PSN setup and
+recovery with Vulkan is still required. A blocked GUI/GPU driver or a process crash
+cannot be repaired by an in-process watchdog.

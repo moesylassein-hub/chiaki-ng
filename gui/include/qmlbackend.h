@@ -1,5 +1,7 @@
 #pragma once
 
+#include "streamhealth.h"
+#include <QJsonArray>
 #include "streamsession.h"
 #include "discoverymanager.h"
 #include "qmlmainwindow.h"
@@ -30,6 +32,8 @@ class SystemdInhibit;
 class QmlRegist : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(QString recoveryStatus READ recoveryStatus NOTIFY recoveryChanged)
+    Q_PROPERTY(bool recoveryActive READ recoveryActive NOTIFY recoveryChanged)
 
 public:
     QmlRegist(const ChiakiRegistInfo &regist_info, uint32_t log_mask, QObject *parent = nullptr);
@@ -188,6 +192,12 @@ public:
     Q_INVOKABLE void unhideHost(const QString &mac_string);
     Q_INVOKABLE bool registerHost(const QString &host, const QString &psn_id, const QString &pin, const QString &cpin, bool broadcast, int target, const QJSValue &callback);
     Q_INVOKABLE void connectToHost(int index, QString nickname = QString());
+    QString recoveryStatus() const { return recovery_status; }
+    bool recoveryActive() const { return recovery_active; }
+    Q_INVOKABLE void cancelRecovery();
+    Q_INVOKABLE void dismissRecovery();
+    Q_INVOKABLE void exportRecoveryDiagnostics();
+    Q_INVOKABLE void restoreWorkingVideoSettings();
     Q_INVOKABLE void stopSession(bool sleep);
     Q_INVOKABLE void sessionGoHome();
     Q_INVOKABLE void enterPin(const QString &pin);
@@ -219,6 +229,7 @@ public:
 #endif
 
 signals:
+    void recoveryChanged();
     void sessionChanged(StreamSession *session);
     void psnConnect(StreamSession *session, const QString &duid, const bool &ps5);
     void showPsnView();
@@ -297,6 +308,29 @@ private:
     QList<QString> waking_sleeping_nicknames;
     QHash<int, QmlController*> controllers;
     DisplayServer regist_dialog_server;
+    StreamHealth stream_health;
+    QTimer health_timer;
+    QTimer recovery_timer;
+    QString recovery_status;
+    QJsonArray recovery_events;
+    bool recovery_active = false;
+    bool recovery_pending = false;
+    bool recovery_creating = false;
+    bool recovery_cancelled = false;
+    bool recovery_had_connection = false;
+    bool recovery_saved_settings = false;
+    quint64 recovery_generation = 0;
+    int recovery_attempts = 0;
+    unsigned recovery_ceiling = 0;
+    qint64 recovery_started_ms = 0;
+    qint64 recovery_last_frame_ms = 0;
+    qint64 recovery_last_warning_ms = 0;
+    qint64 recovery_healthy_since_ms = 0;
+    void monitorStreamHealth();
+    void reconnectStream(const QString &reason);
+    void setRecoveryStatus(const QString &text, bool active);
+    void recordRecoveryEvent(const QString &event);
+    void saveRecoveryDiagnostics(const QString &path);
     StreamSessionConnectInfo session_info = {};
     SystemdInhibit *sleep_inhibit = {};
 #ifdef Q_OS_MACOS

@@ -597,7 +597,11 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	else
 	{
 #endif
-		chiaki_session_set_video_sample_cb(&session, chiaki_ffmpeg_decoder_video_sample_cb, ffmpeg_decoder);
+		chiaki_session_set_video_sample_cb(&session, [](uint8_t *buf, size_t size, int32_t lost, bool recovered, void *user) {
+            auto *self = static_cast<StreamSession *>(user);
+            self->last_video_sample_us.storeRelaxed(chiaki_time_now_monotonic_us());
+            return chiaki_ffmpeg_decoder_video_sample_cb(buf, size, lost, recovered, self->ffmpeg_decoder);
+        }, this);
 #if CHIAKI_LIB_ENABLE_PI_DECODER
 	}
 #endif
@@ -1942,6 +1946,7 @@ void StreamSession::StopSdeckHaptics()
 
 void StreamSession::PushAudioFrame(int16_t *og_buf, size_t samples_count)
 {
+    last_audio_us.storeRelaxed(chiaki_time_now_monotonic_us());
 	if(!audio_out || !audio_volume)
 		return;
 
@@ -2041,6 +2046,12 @@ void StreamSession::QueueAudioOutData(const QByteArray &audio_data)
 
 void StreamSession::DrainAudioOutRingBuffer()
 {
+    if(audio_out && SDL_GetAudioDeviceStatus(audio_out) == SDL_AUDIO_STOPPED) {
+        if(!audio_output_failed_us.loadRelaxed())
+            audio_output_failed_us.storeRelaxed(chiaki_time_now_monotonic_us());
+        return;
+    }
+    audio_output_failed_us.storeRelaxed(0);
 	const size_t target_queue_size = audio_buffer_size * 2;
 
 	while(audio_out)
@@ -2916,4 +2927,16 @@ static void FfmpegFrameCb(ChiakiFfmpegDecoder *decoder, void *user)
 {
 	auto session = reinterpret_cast<StreamSession *>(user);
 	StreamSessionPrivate::TriggerFfmpegFrameAvailable(session);
+}
+
+
+bool StreamSession::RepairVideo()
+{
+    if(stop_requested || !connected || !ffmpeg_decoder) return false;
+    // Do not block the GUI on a driver that is stuck inside the decoder.
+    if(chiaki_mutex_trylock(&ffmpeg_decoder->mutex) != CHIAKI_ERR_SUCCESS) return false;
+    avcodec_flush_buffers(ffmpeg_decoder->codec_context);
+    chiaki_mutex_unlock(&ffmpeg_decoder->mutex);
+    decoder_flush_generation.fetchAndAddRelaxed(1);
+    return RequestIDR();
 }

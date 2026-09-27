@@ -165,6 +165,9 @@ class StreamSession : public QObject
 		ChiakiSession session;
 		ChiakiOpusDecoder opus_decoder;
 		ChiakiOpusEncoder opus_encoder;
+        QAtomicInteger<qint64> audio_output_failed_us{0};
+        QAtomicInteger<qint64> last_audio_us{0};
+        QAtomicInteger<qint64> last_video_sample_us{0};
 		bool connected;
 		bool muted;
 		bool mic_connected;
@@ -334,6 +337,7 @@ class StreamSession : public QObject
 		explicit StreamSession(const StreamSessionConnectInfo &connect_info, QObject *parent = nullptr);
 		~StreamSession();
 
+        bool IsStopRequested() const { return stop_requested; }
 		bool IsConnected()	{ return connected; }
 		bool IsConnecting()	{ return connect_timer.isValid(); }
 
@@ -341,6 +345,10 @@ class StreamSession : public QObject
 		void Stop();
 		void GoToBed();
 	Q_INVOKABLE bool RequestIDR();
+        bool RepairVideo();
+        qint64 AudioOutputFailedUs() const { return audio_output_failed_us.loadRelaxed(); }
+        qint64 LastAudioUs() const { return last_audio_us.loadRelaxed(); }
+        qint64 LastVideoSampleUs() const { return last_video_sample_us.loadRelaxed(); }
 		void ToggleMute();
 		void SetLoginPIN(const QString &pin);
 		void GoHome();

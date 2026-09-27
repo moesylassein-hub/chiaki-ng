@@ -3032,6 +3032,30 @@ DialogView {
                             Material.roundedScale: Material.SmallScale
                         }
 
+                    CheckBox {
+                        text: qsTr("Automatically recover frozen or disconnected streams")
+                        checked: Chiaki.settings.streamRecovery
+                        onToggled: Chiaki.settings.streamRecovery = checked
+                    }
+                    CheckBox {
+                        text: qsTr("Adaptive bitrate (experimental)")
+                        checked: Chiaki.settings.adaptiveBitrate
+                        onToggled: Chiaki.settings.adaptiveBitrate = checked
+                    }
+                    Label {
+                        text: qsTr("Adaptive bitrate lowers quality during sustained packet loss and restores it after two stable minutes. Changes briefly reconnect the stream. Off by default; at most three automatic reconnects per session.")
+                        wrapMode: Text.WordWrap
+                        Layout.maximumWidth: 580
+                    }
+                    C.Button {
+                        text: qsTr("Export recovery diagnostics")
+                        onClicked: Chiaki.exportRecoveryDiagnostics()
+                    }
+                    C.Button {
+                        text: qsTr("Restore last working video settings")
+                        enabled: !Chiaki.session && !Chiaki.recoveryActive
+                        onClicked: Chiaki.restoreWorkingVideoSettings()
+                    }
                     C.Button {
                         id: exportButton
                         text: qsTr("Export settings to file")

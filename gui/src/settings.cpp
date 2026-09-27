@@ -272,6 +272,8 @@ Settings::Settings(const QString &conf, QObject *parent) : QObject(parent),
 	MigrateSettings(&settings);
 	MigrateVideoProfile(&settings);
 	MigrateControllerMappings(&settings);
+    if(settings.value("working_video/incomplete_trials", 0).toInt() >= 2)
+        video_settings_restored = RestoreWorkingVideoSettings();
 	manual_hosts_id_next = 0;
 	settings.setValue("version", SETTINGS_VERSION);
 	LoadRegisteredHosts();
@@ -2515,4 +2517,51 @@ QMap<Qt::Key, int> Settings::GetControllerMappingForDecoding()
 		result[it.value()] = it.key();
 	}
 	return result;
+}
+
+
+// Deliberately exclude account, registration, controller and microphone settings.
+static const QStringList &WorkingVideoKeys()
+{
+    static const QStringList keys = {"resolution_local_ps5", "resolution_remote_ps5",
+        "resolution_local_ps4", "resolution_remote_ps4", "fps_local_ps5", "fps_remote_ps5",
+        "fps_local_ps4", "fps_remote_ps4", "bitrate_local_ps5", "bitrate_remote_ps5",
+        "bitrate_local_ps4", "bitrate_remote_ps4", "codec_local_ps5", "codec_remote_ps5",
+        "hw_decoder", "render_backend", "placebo_preset", "vsync", "use_zero_copy"};
+    return keys;
+}
+void Settings::SaveWorkingVideoSettings()
+{
+    for(const auto &key : WorkingVideoKeys()) {
+        settings.remove("working_video/" + key);
+        if(settings.contains("trial_video/" + key))
+            settings.setValue("working_video/" + key, settings.value("trial_video/" + key));
+    }
+    settings.setValue("working_video/valid", true);
+    EndVideoTrial();
+}
+bool Settings::RestoreWorkingVideoSettings()
+{
+    if(!settings.value("working_video/valid", false).toBool()) return false;
+    for(const auto &key : WorkingVideoKeys()) {
+        settings.remove("settings/" + key);
+        if(settings.contains("working_video/" + key))
+            settings.setValue("settings/" + key, settings.value("working_video/" + key));
+    }
+    EndVideoTrial();
+    return true;
+}
+void Settings::BeginVideoTrial()
+{
+    settings.remove("trial_video");
+    for(const auto &key : WorkingVideoKeys())
+        if(settings.contains("settings/" + key))
+            settings.setValue("trial_video/" + key, settings.value("settings/" + key));
+    settings.setValue("working_video/incomplete_trials", settings.value("working_video/incomplete_trials", 0).toInt() + 1);
+    settings.sync();
+}
+void Settings::EndVideoTrial()
+{
+    settings.setValue("working_video/incomplete_trials", 0);
+    settings.sync();
 }

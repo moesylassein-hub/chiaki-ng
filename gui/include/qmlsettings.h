@@ -5,6 +5,8 @@
 class QmlSettings : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(bool streamRecovery READ streamRecovery WRITE setStreamRecovery NOTIFY streamRecoveryChanged)
+    Q_PROPERTY(bool adaptiveBitrate READ adaptiveBitrate WRITE setAdaptiveBitrate NOTIFY adaptiveBitrateChanged)
     Q_PROPERTY(bool remotePlayAsk READ remotePlayAsk WRITE setRemotePlayAsk NOTIFY remotePlayAskChanged)
     Q_PROPERTY(bool addSteamShortcutAsk READ addSteamShortcutAsk WRITE setAddSteamShortcutAsk NOTIFY addSteamShortcutAskChanged)
     Q_PROPERTY(bool hideCursor READ hideCursor WRITE setHideCursor NOTIFY hideCursorChanged)
@@ -163,6 +165,10 @@ class QmlSettings : public QObject
     Q_PROPERTY(float placeboToneMappingContrastSmoothness READ placeboToneMappingContrastSmoothness WRITE setPlaceboToneMappingContrastSmoothness NOTIFY placeboToneMappingContrastSmoothnessChanged)
 
 public:
+    bool streamRecovery() const { return settings->GetStreamRecovery(); }
+    void setStreamRecovery(bool v) { settings->SetStreamRecovery(v); emit streamRecoveryChanged(); }
+    bool adaptiveBitrate() const { return settings->GetAdaptiveBitrate(); }
+    void setAdaptiveBitrate(bool v) { settings->SetAdaptiveBitrate(v); emit adaptiveBitrateChanged(); }
     QmlSettings(Settings *settings, QObject *parent = nullptr);
 
     int resolutionLocalPS4() const;
@@ -612,6 +618,8 @@ public:
     Q_INVOKABLE QString stringForStreamMenuShortcut() const;
 
 signals:
+    void streamRecoveryChanged();
+    void adaptiveBitrateChanged();
     void resolutionLocalPS4Changed();
     void resolutionRemotePS4Changed();
     void resolutionLocalPS5Changed();
