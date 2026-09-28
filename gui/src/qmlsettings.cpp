@@ -1897,6 +1897,7 @@ void QmlSettings::refreshAllKeys()
     emit allowJoystickBackgroundEventsChanged();
     emit startMicUnmutedChanged();
     emit streamRecoveryChanged();
+    emit directPS5ControllerChanged();
     emit adaptiveBitrateChanged();
     emit showStreamStatsChanged();
     emit streamerModeChanged();

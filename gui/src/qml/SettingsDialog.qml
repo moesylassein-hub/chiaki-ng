@@ -3033,6 +3033,17 @@ DialogView {
                         }
 
                     CheckBox {
+                        text: qsTr("Controller connected directly to PS5 (experimental)")
+                        checked: Chiaki.settings.directPS5Controller
+                        enabled: !Chiaki.session && !Chiaki.recoveryActive
+                        onToggled: Chiaki.settings.directPS5Controller = checked
+                    }
+                    Label {
+                        text: qsTr("PS5 only. Reports no remote controller and disables streamed controller input. Pair your controller with the PS5. Same-account streaming may still disconnect; turn this off if it does. Applies on the next connection.")
+                        wrapMode: Text.WordWrap
+                        Layout.maximumWidth: 580
+                    }
+                    CheckBox {
                         text: qsTr("Automatically recover frozen or disconnected streams")
                         checked: Chiaki.settings.streamRecovery
                         onToggled: Chiaki.settings.streamRecovery = checked

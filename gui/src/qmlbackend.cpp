@@ -2840,6 +2840,7 @@ void QmlBackend::saveRecoveryDiagnostics(const QString &path)
     report["format_version"] = 1;
     report["chiaki_version"] = QStringLiteral(CHIAKI_VERSION);
     report["adaptive_bitrate_enabled"] = settings->GetAdaptiveBitrate();
+    report["direct_ps5_controller_enabled"] = settings->GetDirectPS5Controller();
     report["events"] = recovery_events;
     QSaveFile out(path);
     const QByteArray bytes = QJsonDocument(report).toJson();

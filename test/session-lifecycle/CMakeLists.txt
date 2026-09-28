@@ -11,3 +11,8 @@ add_executable(stream-health-unit health.cpp)
 target_include_directories(stream-health-unit PRIVATE ../../gui/include)
 target_compile_features(stream-health-unit PRIVATE cxx_std_11)
 add_test(NAME stream-health COMMAND stream-health-unit)
+if(NOT MSVC)
+    find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME direct-controller COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/direct-controller.py ${CMAKE_CXX_COMPILER})
+endif()

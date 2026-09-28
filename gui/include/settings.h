@@ -260,6 +260,8 @@ class Settings : public QObject
 
         bool GetStreamRecovery() const { return settings.value("settings/stream_recovery", true).toBool(); }
         void SetStreamRecovery(bool v) { settings.setValue("settings/stream_recovery", v); }
+        bool GetDirectPS5Controller() const { return settings.value("settings/direct_ps5_controller", false).toBool(); }
+        void SetDirectPS5Controller(bool v) { settings.setValue("settings/direct_ps5_controller", v); }
         bool GetAdaptiveBitrate() const { return settings.value("settings/adaptive_bitrate", false).toBool(); }
         void SetAdaptiveBitrate(bool v) { settings.setValue("settings/adaptive_bitrate", v); }
         void SaveWorkingVideoSettings();

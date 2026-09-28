@@ -6,6 +6,7 @@ class QmlSettings : public QObject
 {
     Q_OBJECT
     Q_PROPERTY(bool streamRecovery READ streamRecovery WRITE setStreamRecovery NOTIFY streamRecoveryChanged)
+    Q_PROPERTY(bool directPS5Controller READ directPS5Controller WRITE setDirectPS5Controller NOTIFY directPS5ControllerChanged)
     Q_PROPERTY(bool adaptiveBitrate READ adaptiveBitrate WRITE setAdaptiveBitrate NOTIFY adaptiveBitrateChanged)
     Q_PROPERTY(bool remotePlayAsk READ remotePlayAsk WRITE setRemotePlayAsk NOTIFY remotePlayAskChanged)
     Q_PROPERTY(bool addSteamShortcutAsk READ addSteamShortcutAsk WRITE setAddSteamShortcutAsk NOTIFY addSteamShortcutAskChanged)
@@ -167,6 +168,8 @@ class QmlSettings : public QObject
 public:
     bool streamRecovery() const { return settings->GetStreamRecovery(); }
     void setStreamRecovery(bool v) { settings->SetStreamRecovery(v); emit streamRecoveryChanged(); }
+    bool directPS5Controller() const { return settings->GetDirectPS5Controller(); }
+    void setDirectPS5Controller(bool v) { settings->SetDirectPS5Controller(v); emit directPS5ControllerChanged(); }
     bool adaptiveBitrate() const { return settings->GetAdaptiveBitrate(); }
     void setAdaptiveBitrate(bool v) { settings->SetAdaptiveBitrate(v); emit adaptiveBitrateChanged(); }
     QmlSettings(Settings *settings, QObject *parent = nullptr);
@@ -619,6 +622,7 @@ public:
 
 signals:
     void streamRecoveryChanged();
+    void directPS5ControllerChanged();
     void adaptiveBitrateChanged();
     void resolutionLocalPS4Changed();
     void resolutionRemotePS4Changed();

@@ -84,6 +84,23 @@ If any check fails, retain the session log and Windows crash details, plus the
 decoder/renderer settings and whether the connection was LAN or PSN. Those are
 needed to identify remaining faults. No claim of flawless operation is made.
 
+## Experimental controller connected directly to PS5
+
+Settings → Config → **Controller connected directly to PS5 (experimental)** is
+OFF by default, applies only to PS5, and can be changed only while disconnected.
+It sends the controller-connection message with `connected=false`, omits the
+controller type, and does not start the remote controller feedback sender.
+Controller state submissions are ignored, including gamepad, keyboard-as-controller,
+mouse/touch and motion input. Transport heartbeats, video/audio, registration and
+session authentication are unchanged. No secondary account is selected or created.
+
+This is a protocol experiment, not confirmed same-account support. The PS5 may
+still terminate Remote Play when its directly paired controller selects the same
+account. Test both connecting Chiaki first and turning on the PS5 controller first.
+If either disconnects, retain the log and disable this checkbox before reconnecting.
+The disabled state preserves normal remote input. This does not change Bluetooth
+pairing or firmware account policy. PC application controls still work.
+
 ## Stream health and recovery
 
 Settings → Config contains **Automatically recover frozen or disconnected streams**

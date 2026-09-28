@@ -95,6 +95,7 @@ class SdeckHapticsWorker;
 		bool enable_keyboard;
 		bool keyboard_controller_enabled;
 		bool mouse_touch_enabled;
+		bool direct_ps5_controller = false;
 		bool enable_dualsense;
 		bool auto_regist;
 		float haptic_override;
