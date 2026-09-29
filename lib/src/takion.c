@@ -257,7 +257,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
 			CHIAKI_LOGE(takion->log, "Takion had problem reading extra messages from socket using PSN Connection with error: " CHIAKI_SOCKET_ERROR_FMT, CHIAKI_SOCKET_ERROR_VALUE);
 			goto error_sock;
 		}
-		const int rcvbuf_val = takion->a_rwnd;
+		const int rcvbuf_val = 1024 * 1024; // OS receive cushion; independent of protocol window
 		int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
 		if(r < 0)
 		{
@@ -345,7 +345,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
 			ret = CHIAKI_ERR_NETWORK;
 			goto error_pipe;
 		}
-		const int rcvbuf_val = takion->a_rwnd;
+		const int rcvbuf_val = 1024 * 1024; // OS receive cushion; independent of protocol window
 		int r = setsockopt(takion->sock, SOL_SOCKET, SO_RCVBUF, (const CHIAKI_SOCKET_BUF_TYPE)&rcvbuf_val, sizeof(rcvbuf_val));
 		if(r < 0)
 		{
@@ -437,7 +437,9 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_takion_connect(ChiakiTakion *takion, Chiaki
 		}
 	}
 
+	CHIAKI_LOGI(takion->log, "Takion requested 1048576-byte UDP receive buffer");
 	err = chiaki_thread_create(&takion->thread, takion_thread_func, takion);
+	if(err != CHIAKI_ERR_SUCCESS) { ret = err; goto error_sock; }
 
 	chiaki_thread_set_name(&takion->thread, "Chiaki Takion");
 
@@ -462,6 +464,15 @@ CHIAKI_EXPORT void chiaki_takion_close(ChiakiTakion *takion)
 {
 	chiaki_stop_pipe_stop(&takion->stop_pipe);
 	chiaki_thread_join(&takion->thread, NULL);
+	// The owner stops congestion/feedback senders before closing this socket.
+	if(takion->close_socket)
+	{
+		if(!CHIAKI_SOCKET_IS_INVALID(takion->sock))
+		{
+			CHIAKI_SOCKET_CLOSE(takion->sock);
+			takion->sock = CHIAKI_INVALID_SOCKET;
+		}
+	}
 	chiaki_stop_pipe_fini(&takion->stop_pipe);
 	chiaki_mutex_fini(&takion->seq_num_local_mutex);
 	chiaki_mutex_fini(&takion->gkcrypt_local_mutex);
@@ -1180,14 +1191,7 @@ beach:
 		event.type = CHIAKI_TAKION_EVENT_TYPE_DISCONNECT;
 		takion->cb(&event, takion->cb_user);
 	}
-	if(takion->close_socket)
-	{
-		if(!CHIAKI_SOCKET_IS_INVALID(takion->sock))
-		{
-			CHIAKI_SOCKET_CLOSE(takion->sock);
-			takion->sock = CHIAKI_INVALID_SOCKET;
-		}
-	}
+
 	return NULL;
 }
 

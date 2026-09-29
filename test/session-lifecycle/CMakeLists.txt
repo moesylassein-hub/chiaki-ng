@@ -13,6 +13,8 @@ target_compile_features(stream-health-unit PRIVATE cxx_std_11)
 add_test(NAME stream-health COMMAND stream-health-unit)
 if(NOT MSVC)
     find_package(Python3 COMPONENTS Interpreter REQUIRED)
+    add_test(NAME network-recovery COMMAND ${Python3_EXECUTABLE}
+        ${CMAKE_CURRENT_SOURCE_DIR}/network.py ${CMAKE_CXX_COMPILER})
     add_test(NAME direct-controller COMMAND ${Python3_EXECUTABLE}
         ${CMAKE_CURRENT_SOURCE_DIR}/direct-controller.py ${CMAKE_CXX_COMPILER})
 endif()

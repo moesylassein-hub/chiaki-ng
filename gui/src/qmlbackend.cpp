@@ -1230,7 +1230,10 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
         if (session != session_for_connections)
             return;
 
+        if(recovery_active || recovery_pending)
+            recordRecoveryEvent(QStringLiteral("session_quit_reason_%1").arg(int(reason)));
         const bool retryable = reason == CHIAKI_QUIT_REASON_STREAM_CONNECTION_UNKNOWN
+            || reason == CHIAKI_QUIT_REASON_STREAM_CONNECTION_REMOTE_DISCONNECTED
             || reason == CHIAKI_QUIT_REASON_CTRL_UNKNOWN
             || reason == CHIAKI_QUIT_REASON_CTRL_CONNECT_FAILED
             || reason == CHIAKI_QUIT_REASON_CTRL_CONNECTION_REFUSED
@@ -2837,7 +2840,8 @@ void QmlBackend::saveRecoveryDiagnostics(const QString &path)
 {
     // Allowlisted report: no raw log messages, IPs, tokens, keys or account names.
     QJsonObject report;
-    report["format_version"] = 1;
+    report["format_version"] = 2;
+    report["build_revision"] = QStringLiteral("recovery-transport-v2");
     report["chiaki_version"] = QStringLiteral(CHIAKI_VERSION);
     report["adaptive_bitrate_enabled"] = settings->GetAdaptiveBitrate();
     report["direct_ps5_controller_enabled"] = settings->GetDirectPS5Controller();
@@ -2874,6 +2878,7 @@ void QmlBackend::reconnectStream(const QString &reason)
         return;
     }
     ++recovery_attempts;
+    recovery_started_ms = chiaki_time_now_monotonic_us() / 1000;
     recovery_pending = true;
     recordRecoveryEvent(reason);
     setRecoveryStatus(tr("%1. Reconnecting (%2/3)…").arg(reason).arg(recovery_attempts), true);
@@ -2886,10 +2891,8 @@ void QmlBackend::monitorStreamHealth()
     if(!session->IsConnected()) {
         if(recovery_active && now - recovery_started_ms > 45000) {
             recordRecoveryEvent(QStringLiteral("connection_timeout"));
-            setRecoveryStatus(tr("Recovery timed out. Connect manually to try again."), false);
-            recovery_cancelled = true;
+            reconnectStream(tr("Recovery connection timed out"));
             session->CancelPsnConnection(false);
-            session->Stop();
         }
         return;
     }
@@ -2928,7 +2931,7 @@ void QmlBackend::monitorStreamHealth()
     if(loss >= 0.03 && now - recovery_last_warning_ms >= 30000 && !recovery_active) {
         recovery_last_warning_ms = now;
         recordRecoveryEvent(QStringLiteral("high_packet_loss"));
-        setRecoveryStatus(tr("Network packet loss is high (%1%). Try Ethernet or a lower bitrate.").arg(loss * 100.0, 0, 'f', 1), false);
+        setRecoveryStatus(tr("Stream packet loss is high (%1%). Check both devices’ connections or try a lower bitrate.").arg(loss * 100.0, 0, 'f', 1), false);
     }
     const auto action = stream_health.tick(now, video_heartbeat, session->LastAudioUs() / 1000,
         loss, video, audio, settings->GetStreamRecovery(), settings->GetAdaptiveBitrate() && recovery_attempts < 3,
@@ -2940,7 +2943,9 @@ void QmlBackend::monitorStreamHealth()
         recordRecoveryEvent(decoded ? QStringLiteral("presentation_stalled") : receiving ? QStringLiteral("decoder_delivery_stalled") : QStringLiteral("video_input_stalled"));
         setRecoveryStatus(decoded ? tr("Video presentation stalled. Trying video recovery…") : receiving ? tr("Video decoding stalled. Trying video recovery…")
             : tr("Video input stalled. Requesting a fresh frame…"), true);
-        session->RepairVideo();
+        recovery_started_ms = now;
+        const bool requested = session->RepairVideo();
+        recordRecoveryEvent(requested ? QStringLiteral("video_repair_requested") : QStringLiteral("video_repair_request_failed"));
         window->resetPlaceboQueue();
         break;
     }

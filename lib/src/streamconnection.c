@@ -139,7 +139,7 @@ CHIAKI_EXPORT void chiaki_stream_connection_fini(ChiakiStreamConnection *stream_
 static bool state_finished_cond_check(void *user)
 {
 	ChiakiStreamConnection *stream_connection = user;
-	return stream_connection->state_finished || stream_connection->should_stop || stream_connection->remote_disconnected;
+	return stream_connection->state_finished || stream_connection->state_failed || stream_connection->should_stop || stream_connection->remote_disconnected;
 }
 
 CHIAKI_EXPORT ChiakiErrorCode chiaki_stream_connection_run(ChiakiStreamConnection *stream_connection, chiaki_socket_t *socket)
@@ -219,20 +219,22 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_stream_connection_run(ChiakiStreamConnectio
 		goto err_video_receiver;
 	}
 
+
+	err = chiaki_cond_timedwait_pred(&stream_connection->state_cond, &stream_connection->state_mutex, EXPECT_TIMEOUT_MS, state_finished_cond_check, stream_connection);
+	assert(err == CHIAKI_ERR_SUCCESS || err == CHIAKI_ERR_TIMEOUT);
+	CHECK_STOP(close_takion);
+	if(err != CHIAKI_ERR_SUCCESS || stream_connection->state_failed || !stream_connection->state_finished)
+	{
+		CHIAKI_LOGE(session->log, "StreamConnection Takion connect failed");
+		err = CHIAKI_ERR_NETWORK;
+		goto close_takion;
+	}
+
 	err = chiaki_congestion_control_start(&stream_connection->congestion_control, &stream_connection->takion, &stream_connection->packet_stats, stream_connection->packet_loss_max);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
 		CHIAKI_LOGE(session->log, "StreamConnection failed to start Congestion Control");
 		goto close_takion;
-	}
-
-	err = chiaki_cond_timedwait_pred(&stream_connection->state_cond, &stream_connection->state_mutex, EXPECT_TIMEOUT_MS, state_finished_cond_check, stream_connection);
-	assert(err == CHIAKI_ERR_SUCCESS || err == CHIAKI_ERR_TIMEOUT);
-	CHECK_STOP(close_takion);
-	if(err != CHIAKI_ERR_SUCCESS)
-	{
-		CHIAKI_LOGE(session->log, "StreamConnection Takion connect failed");
-		goto err_congestion_control;
 	}
 
 	CHIAKI_LOGI(session->log, "StreamConnection sending big");
@@ -251,7 +253,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_stream_connection_run(ChiakiStreamConnectio
 	assert(err == CHIAKI_ERR_SUCCESS || err == CHIAKI_ERR_TIMEOUT);
 	CHECK_STOP(disconnect);
 
-	if(!stream_connection->state_finished)
+	if(!stream_connection->state_finished || stream_connection->state_failed)
 	{
 		if(err == CHIAKI_ERR_TIMEOUT)
 			CHIAKI_LOGE(session->log, "StreamConnection bang receive timeout");
@@ -275,7 +277,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_stream_connection_run(ChiakiStreamConnectio
 	assert(err == CHIAKI_ERR_SUCCESS || err == CHIAKI_ERR_TIMEOUT);
 	CHECK_STOP(disconnect);
 
-	if(!stream_connection->state_finished)
+	if(!stream_connection->state_finished || stream_connection->state_failed)
 	{
 		if(err == CHIAKI_ERR_TIMEOUT)
 			CHIAKI_LOGE(session->log, "StreamConnection streaminfo receive timeout");
@@ -347,7 +349,8 @@ disconnect:
 		free(stream_connection->streaminfo_early_buf);
 		stream_connection->streaminfo_early_buf = NULL;
 	}
-	stream_connection_send_disconnect(stream_connection);
+	if(!stream_connection->state_failed)
+		stream_connection_send_disconnect(stream_connection);
 
 	if(stream_connection->should_stop)
 	{
@@ -360,7 +363,9 @@ disconnect:
 		err = CHIAKI_ERR_DISCONNECTED;
 	}
 
-err_congestion_control:
+	else if(stream_connection->state_failed)
+		err = CHIAKI_ERR_NETWORK;
+
 	chiaki_congestion_control_stop(&stream_connection->congestion_control);
 
 close_takion:
@@ -410,7 +415,7 @@ static void stream_connection_takion_cb(ChiakiTakionEvent *event, void *user)
 		case CHIAKI_TAKION_EVENT_TYPE_CONNECTED:
 		case CHIAKI_TAKION_EVENT_TYPE_DISCONNECT:
 			chiaki_mutex_lock(&stream_connection->state_mutex);
-			if(stream_connection->state == STATE_TAKION_CONNECT)
+			if(stream_connection->state == STATE_TAKION_CONNECT || event->type == CHIAKI_TAKION_EVENT_TYPE_DISCONNECT)
 			{
 				stream_connection->state_finished = event->type == CHIAKI_TAKION_EVENT_TYPE_CONNECTED;
 				stream_connection->state_failed = event->type == CHIAKI_TAKION_EVENT_TYPE_DISCONNECT;

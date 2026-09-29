@@ -159,3 +159,26 @@ Run it together with the session-resource lifetime tests. A Windows streaming te
 with induced loss, controller/audio unplugging, cancellation during PSN setup and
 recovery with Vulkan is still required. A blocked GUI/GPU driver or a process crash
 cannot be repaired by an in-process watchdog.
+
+### Transport and recovery follow-up
+
+Transport disconnects wake both handshake and active-stream waiters. Congestion
+reports start only after the UDP handshake; the socket stays owned until senders
+have stopped and the receive worker has joined. Receive sockets request a 1 MiB
+buffer to tolerate short scheduling delays (the OS may cap the granted size).
+
+Packet accounting locks sequence updates, handles 16-bit wraparound, ignores
+duplicates, and counts every source audio unit. The UI samples cumulative counters
+under the same lock and weights loss by packet counts over two seconds. Packets
+arriving after an interval has been reported remain counted as late/missing.
+
+Video repair requests a fresh frame even when the decoder is busy. Unexpected
+transport disconnections and timed-out recovery attempts use the remaining retry
+budget; console shutdown remains excluded. Diagnostics version 2 records numeric
+quit reasons and whether the fresh-frame request succeeded. Adaptive bitrate
+remains optional and disabled by default.
+
+`test/session-lifecycle/network.py` checks production packet accounting with
+wraparound, duplicates, reordering, concurrent sampling and transport-failure wait
+predicates using AddressSanitizer and UndefinedBehaviorSanitizer. These checks
+cannot establish the cause of physical packet loss or replace a real PS5 test.

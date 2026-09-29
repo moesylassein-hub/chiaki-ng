@@ -187,7 +187,9 @@ class StreamSession : public QObject
 		int32_t frames_lost = 0;
 		int32_t pending_frames_lost = 0;
 		double packet_loss_max = 0;
-		QList<double> packet_loss_history;
+		QList<QPair<quint64, quint64>> packet_loss_history;
+        uint64_t packet_received_previous = 0;
+        uint64_t packet_lost_previous = 0;
 		QAtomicInteger<quint64> decoder_flush_generation{0};
 		bool cant_display = false;
 		int haptics_handheld;

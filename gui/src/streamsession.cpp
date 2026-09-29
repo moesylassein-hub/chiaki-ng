@@ -691,17 +691,25 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	packet_loss_timer->setInterval(200);
 	packet_loss_timer->start();
 	connect(packet_loss_timer, &QTimer::timeout, this, [this]() {
-		if(packet_loss_history.size() > 10)
-			packet_loss_history.takeFirst();
-		packet_loss_history.append(session.stream_connection.congestion_control.packet_loss);
-		double packet_loss = 0;
-		for(auto v : std::as_const(packet_loss_history))
-			packet_loss += v / packet_loss_history.size();
+		uint64_t received, lost;
+		chiaki_packet_stats_get_totals(&session.stream_connection.packet_stats, &received, &lost);
+		if(packet_loss_history.size() >= 10) packet_loss_history.takeFirst();
+		packet_loss_history.append(qMakePair(quint64(received - packet_received_previous), quint64(lost - packet_lost_previous)));
+		packet_received_previous = received;
+		packet_lost_previous = lost;
+		uint64_t window_received = 0, window_lost = 0;
+		for(const auto &sample : std::as_const(packet_loss_history)) {
+			window_received += sample.first;
+			window_lost += sample.second;
+		}
+		const double packet_loss = window_received + window_lost
+			? double(window_lost) / double(window_received + window_lost) : 0.0;
 		if(packet_loss != average_packet_loss)
 		{
 			average_packet_loss = packet_loss;
 			emit AveragePacketLossChanged();
 		}
+		chiaki_mutex_lock(&session.stream_connection.state_mutex);
 		if(session.stream_connection.video_receiver)
 		{
 			int32_t total = chiaki_video_receiver_get_frames_lost_total(session.stream_connection.video_receiver);
@@ -712,6 +720,7 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 			}
 			pending_frames_lost = total;
 		}
+		chiaki_mutex_unlock(&session.stream_connection.state_mutex);
 	});
 
 	StartAudioOutDrainThread();
@@ -2936,9 +2945,11 @@ bool StreamSession::RepairVideo()
 {
     if(stop_requested || !connected || !ffmpeg_decoder) return false;
     // Do not block the GUI on a driver that is stuck inside the decoder.
-    if(chiaki_mutex_trylock(&ffmpeg_decoder->mutex) != CHIAKI_ERR_SUCCESS) return false;
-    avcodec_flush_buffers(ffmpeg_decoder->codec_context);
-    chiaki_mutex_unlock(&ffmpeg_decoder->mutex);
-    decoder_flush_generation.fetchAndAddRelaxed(1);
+    if(chiaki_mutex_trylock(&ffmpeg_decoder->mutex) == CHIAKI_ERR_SUCCESS) {
+        avcodec_flush_buffers(ffmpeg_decoder->codec_context);
+        chiaki_mutex_unlock(&ffmpeg_decoder->mutex);
+        decoder_flush_generation.fetchAndAddRelaxed(1);
+    }
+    // Even a busy decoder must not prevent the console receiving the IDR request.
     return RequestIDR();
 }
