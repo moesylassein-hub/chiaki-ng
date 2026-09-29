@@ -2,6 +2,13 @@
 #include "qmlsettings.h"
 #include "qmlmainwindow.h"
 #include "streamsession.h"
+#include "sessionresource.h"
+#include <memory>
+#include <QJsonDocument>
+#include <QJsonObject>
+#include <QSaveFile>
+#include <QFileDialog>
+#include <QDateTime>
 #include "controllermanager.h"
 #include "psnaccountid.h"
 #include "psntoken.h"
@@ -286,6 +293,24 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     , settings_qml(new QmlSettings(settings, this))
     , window(window)
 {
+    health_timer.setInterval(1000);
+    connect(&health_timer, &QTimer::timeout, this, &QmlBackend::monitorStreamHealth);
+    health_timer.start();
+    recovery_timer.setSingleShot(true);
+    connect(&recovery_timer, &QTimer::timeout, this, [this]() {
+        if(recovery_cancelled || session || !recovery_pending) return;
+        recovery_pending = false;
+        recovery_creating = true;
+        auto info = session_info;
+        info.log_file = CreateLogFilename();
+        // Automatic reconnect never reopens a microphone that the user muted.
+        info.start_mic_unmuted = false;
+        createSession(info);
+        recovery_creating = false;
+        if(!session) setRecoveryStatus(tr("Recovery could not start. Connect manually to try again."), false);
+    });
+    if(settings->VideoSettingsRestored())
+        setRecoveryStatus(tr("Restored the last working video settings after two interrupted starts."), false);
     qt_msg_handler = qInstallMessageHandler(msg_handler);
 
     const char *uri = "org.streetpea.chiaking";
@@ -485,8 +510,13 @@ bool QmlBackend::prepareFrameForPresentation(ChiakiFfmpegFrame &frame, bool use_
 
 QmlBackend::~QmlBackend()
 {
+    recovery_timer.stop();
+    health_timer.stop();
+    settings->EndVideoTrial();
     if(session)
     {
+        // Wake the PSN worker before waiting for it during application shutdown.
+        session->CancelPsnConnection(true);
         chiaki_log_mutex.lock();
         chiaki_log_ctx = nullptr;
         chiaki_log_mutex.unlock();
@@ -527,6 +557,8 @@ void QmlBackend::updateAudioVolume()
 
 void QmlBackend::goToSleep()
 {
+    cancelRecovery();
+    settings->EndVideoTrial();
     qCInfo(chiakiGui) << "About to sleep";
     if (session) {
         if (this->settings->GetSuspendAction() == SuspendAction::Sleep)
@@ -583,6 +615,8 @@ QList<QmlController*> QmlBackend::qmlControllers() const
 
 void QmlBackend::profileChanged()
 {
+    cancelRecovery();
+    settings->EndVideoTrial();
     QString profile = settings->GetCurrentProfile();
     Settings *settings_copy = new Settings(profile);
     if(settings_allocd)
@@ -851,11 +885,23 @@ bool QmlBackend::autoConnect() const
 
 void QmlBackend::psnCancel(bool stop_thread)
 {
-    session->CancelPsnConnection(stop_thread);
+    cancelRecovery();
+    if (session)
+        session->CancelPsnConnection(stop_thread);
 }
 
-void QmlBackend::checkPsnConnection(const ChiakiErrorCode &err)
+void QmlBackend::checkPsnConnection(StreamSession *source, const ChiakiErrorCode &err)
 {
+    if (!session || session != source)
+        return;
+    if(err == CHIAKI_ERR_SUCCESS && source->IsStopRequested()) {
+        checkPsnConnection(source, CHIAKI_ERR_UNKNOWN);
+        return;
+    }
+    if(err != CHIAKI_ERR_SUCCESS && recovery_active) {
+        recordRecoveryEvent(QStringLiteral("psn_connection_failed"));
+        setRecoveryStatus(tr("Remote connection recovery failed. Connect manually to try again."), false);
+    }
     switch(err)
     {
         case CHIAKI_ERR_SUCCESS:
@@ -908,6 +954,8 @@ void QmlBackend::psnSessionStart()
 
 void QmlBackend::startSession(bool emit_session_changed)
 {
+    if (!session)
+        return;
     if (window)
         window->armVerbosePlaceboQuietWindow();
 
@@ -929,6 +977,9 @@ void QmlBackend::startSession(bool emit_session_changed)
             window->requestOverlayUpdate();
         }
         failed_session->deleteLater();
+        sleep_inhibit->release();
+        setDiscoveryEnabled(true);
+        window->setWindowAdjustable(true);
         emit error(tr("Stream failed"), tr("Failed to start Stream Session: %1").arg(e.what()));
         return;
     }
@@ -953,6 +1004,23 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
         return;
     }
 
+    if(!recovery_creating) {
+        ++recovery_generation;
+        recovery_timer.stop();
+        recovery_cancelled = false;
+        recovery_pending = false;
+        recovery_attempts = 0;
+        recovery_had_connection = false;
+        recovery_saved_settings = false;
+        recovery_events = QJsonArray();
+        recovery_ceiling = connect_info.video_profile.bitrate;
+        settings->BeginVideoTrial();
+        setRecoveryStatus(QString(), false);
+    }
+    recovery_started_ms = chiaki_time_now_monotonic_us() / 1000;
+    recovery_last_frame_ms = 0;
+    recovery_healthy_since_ms = 0;
+    stream_health.reset(recovery_started_ms);
     session_info = connect_info;
     window->setStreamMaxFPS(connect_info.video_profile.max_fps);
     disable_zero_copy = !settings->GetUseZeroCopy();
@@ -1100,55 +1168,85 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
     try {
         session = new StreamSession(session_info, this);
     } catch (const Exception &e) {
+        wakeup_nickname.clear();
+        window->setWindowAdjustable(true);
+        setDiscoveryEnabled(true);
         emit error(tr("Stream failed"), tr("Failed to initialize Stream Session: %1").arg(e.what()));
         return;
     }
 
-    connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(), [this, use_opengl_renderer]() {
-        ChiakiFfmpegDecoder *decoder = session->GetFfmpegDecoder();
-        if (!decoder) {
-            qCCritical(chiakiGui) << "Session has no FFmpeg decoder";
-            return;
-        }
-        int32_t frames_lost;
-        ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
-        if (!frame.frame)
-            return;
-        logDecoderDeliveryStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frames_lost, frame.recovered);
-        logDecoderFramePtsStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frame.pts, frame.duration);
-        if (frame.recovered)
-            pending_recovered_frame.storeRelaxed(1);
+    StreamSession *session_for_connections = session;
+    auto frame_resource = std::make_shared<SessionResource<ChiakiFfmpegDecoder>>(session->GetFfmpegDecoder());
+    connect(session, &StreamSession::FfmpegDecoderClosing, this, [frame_resource]() {
+        frame_resource->Close();
+    }, Qt::DirectConnection);
+    connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(),
+            [this, use_opengl_renderer, frame_resource, session_for_connections]() {
+        frame_resource->Use([&](ChiakiFfmpegDecoder *decoder) {
+            int32_t frames_lost;
+            ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
+            if (!frame.frame)
+                return;
+            logDecoderDeliveryStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frames_lost, frame.recovered);
+            logDecoderFramePtsStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frame.pts, frame.duration);
+            if (frame.recovered)
+                pending_recovered_frame.storeRelaxed(1);
 
-        const qint64 prepare_begin_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        if (!prepareFrameForPresentation(frame, use_opengl_renderer))
-        {
-            av_frame_free(&frame.frame);
-            return;
-        }
-        const qint64 prepare_end_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        if (prepare_end_us >= prepare_begin_us && prepare_end_us - prepare_begin_us >= 5000) {
-            CHIAKI_NOISY_DEBUG().nospace()
-                << "[decode] prepare_frame_us=" << (prepare_end_us - prepare_begin_us)
-                << " pts=" << frame.pts;
-        }
+            const qint64 prepare_begin_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            if (!prepareFrameForPresentation(frame, use_opengl_renderer))
+            {
+                av_frame_free(&frame.frame);
+                return;
+            }
+            const qint64 prepare_end_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            if (prepare_end_us >= prepare_begin_us && prepare_end_us - prepare_begin_us >= 5000) {
+                CHIAKI_NOISY_DEBUG().nospace()
+                    << "[decode] prepare_frame_us=" << (prepare_end_us - prepare_begin_us)
+                    << " pts=" << frame.pts;
+            }
 
-        if (pending_recovered_frame.fetchAndStoreRelaxed(0) != 0) {
-            frame.recovered = true;
-        }
+            if (pending_recovered_frame.fetchAndStoreRelaxed(0) != 0) {
+                frame.recovered = true;
+            }
 
-        const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        QmlMainWindow *target_window = window;
-        QMetaObject::invokeMethod(target_window, [target_window, frame, frames_lost, delivery_us]() mutable {
-            target_window->presentFrame(frame, frames_lost, delivery_us);
+            const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            QmlMainWindow *target_window = window;
+            // Own queued frames even if the receiver is destroyed before delivery.
+            auto owned_frame = std::shared_ptr<AVFrame>(frame.frame, [](AVFrame *f) { av_frame_free(&f); });
+            QMetaObject::invokeMethod(this, [this, target_window, frame, owned_frame, frame_resource,
+                                          session_for_connections, frames_lost, delivery_us]() mutable {
+                if (session != session_for_connections || !frame_resource->IsOpen())
+                    return;
+                recovery_last_frame_ms = chiaki_time_now_monotonic_us() / 1000;
+                // presentFrame takes ownership; the queued event keeps its own reference.
+                frame.frame = av_frame_clone(owned_frame.get());
+                if (frame.frame)
+                    target_window->presentFrame(frame, frames_lost, delivery_us);
+            });
         });
     });
 
-    StreamSession *session_for_connections = session;
     connect(session, &StreamSession::SessionQuit, this, [this, session_for_connections](ChiakiQuitReason reason, const QString &reason_str) {
         if (session != session_for_connections)
             return;
 
-        if (chiaki_quit_reason_is_error(reason)) {
+        if(recovery_active || recovery_pending)
+            recordRecoveryEvent(QStringLiteral("session_quit_reason_%1").arg(int(reason)));
+        const bool retryable = reason == CHIAKI_QUIT_REASON_STREAM_CONNECTION_UNKNOWN
+            || reason == CHIAKI_QUIT_REASON_STREAM_CONNECTION_REMOTE_DISCONNECTED
+            || reason == CHIAKI_QUIT_REASON_CTRL_UNKNOWN
+            || reason == CHIAKI_QUIT_REASON_CTRL_CONNECT_FAILED
+            || reason == CHIAKI_QUIT_REASON_CTRL_CONNECTION_REFUSED
+            || reason == CHIAKI_QUIT_REASON_SESSION_REQUEST_CONNECTION_REFUSED
+            || reason == CHIAKI_QUIT_REASON_SESSION_REQUEST_RP_IN_USE;
+        if(!recovery_pending && !recovery_cancelled && recovery_had_connection
+            && settings->GetStreamRecovery() && retryable)
+            reconnectStream(tr("Network connection interrupted"));
+        if(recovery_active && !recovery_pending) {
+            recordRecoveryEvent(QStringLiteral("recovery_ended"));
+            setRecoveryStatus(tr("Recovery ended: %1").arg(QString::fromUtf8(chiaki_quit_reason_string(reason))), false);
+        }
+        if (chiaki_quit_reason_is_error(reason) && !recovery_pending) {
             QString m = tr("Chiaki Session has quit") + ":\n" + chiaki_quit_reason_string(reason);
             if (!reason_str.isEmpty())
                 m += "\n" + tr("Reason") + ": \"" + reason_str + "\"";
@@ -1165,6 +1263,14 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
             logged_hw_transfer_failures.clear();
         }
 
+        if(recovery_pending) {
+            // Start the reconnect delay only after the old decoder/session is destroyed.
+            const quint64 generation = recovery_generation;
+            connect(session_for_connections, &QObject::destroyed, this, [this, generation]() {
+                if(generation == recovery_generation && recovery_pending && !recovery_cancelled)
+                    recovery_timer.start(2000 * recovery_attempts);
+            });
+        }
         session_for_connections->deleteLater();
         session = nullptr;
         emit sessionChanged(session);
@@ -1173,14 +1279,16 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
         setDiscoveryEnabled(true);
 #ifdef Q_OS_WINDOWS
         qCInfo(chiakiGui) << "Checking sleep state: ";
-        if(windows_wake_sleep->getWakeState() == WindowsWakeState::Awake)
+        if(!recovery_pending && windows_wake_sleep->getWakeState() == WindowsWakeState::Awake)
             QTimer::singleShot(2000, this, &QmlBackend::resumeFromSleep);
         else
             windows_wake_sleep->setWakeState(WindowsWakeState::Sleeping);
 #endif
     });
 
-    connect(session, &StreamSession::LoginPINRequested, this, [this, connect_info](bool incorrect) {
+    connect(session, &StreamSession::LoginPINRequested, this, [this, connect_info, session_for_connections](bool incorrect) {
+        if (session != session_for_connections)
+            return;
         if (!connect_info.initial_login_pin.isEmpty() && incorrect == false)
             session->SetLoginPIN(connect_info.initial_login_pin);
         else
@@ -1204,8 +1312,12 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
         if (session != session_for_connections)
             return;
 
-        if (session_for_connections->IsConnected())
+        if (session_for_connections->IsConnected()) {
+            recovery_had_connection = true;
+            recovery_started_ms = chiaki_time_now_monotonic_us() / 1000;
+            stream_health.reset(recovery_started_ms);
             setDiscoveryEnabled(false);
+        }
     });
     chiaki_log_mutex.lock();
     chiaki_log_ctx = session->GetChiakiLog();
@@ -1239,8 +1351,11 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
 
 bool QmlBackend::closeRequested()
 {
-    if (!session)
+    if (!session) {
+        cancelRecovery();
+        settings->EndVideoTrial();
         return true;
+    }
 
     bool stop = true;
     if (session->IsConnected()) {
@@ -1257,8 +1372,11 @@ bool QmlBackend::closeRequested()
         }
     }
 
-    if (stop)
+    if (stop) {
+        cancelRecovery();
+        settings->EndVideoTrial();
         session->Stop();
+    }
 
     return false;
 }
@@ -1282,7 +1400,7 @@ void QmlBackend::wakeUpHost(int index, QString nickname)
     if (!nickname.isEmpty())
     {
         waking_sleeping_nicknames.append(nickname);
-        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this, nickname]{
+        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
             waking_sleeping_nicknames.removeOne(nickname);
             emit hostsChanged();
         });
@@ -1516,7 +1634,8 @@ void QmlBackend::setWebEngineHints(QQuickWebEngineProfile *profile)
 
 void QmlBackend::connectToHost(int index, QString nickname)
 {
-    window->setWindowAdjustable(false);
+    if (session || recovery_active)
+        return;
     auto server = displayServerAt(index);
     if (!server.valid)
         return;
@@ -1527,6 +1646,7 @@ void QmlBackend::connectToHost(int index, QString nickname)
         return;
     }
 
+    window->setWindowAdjustable(false);
     if (server.discovered && server.discovery_host.state == CHIAKI_DISCOVERY_HOST_STATE_STANDBY)
     {
         const QString wake_host = server.GetHostAddr();
@@ -1540,11 +1660,10 @@ void QmlBackend::connectToHost(int index, QString nickname)
         }
         if(nickname.isEmpty())
         {
-            qCWarning(chiakiGui) << "No nickname given for registered connection, not connecting...";
-            return;
+            nickname = server.registered_host.GetServerNickname();
         }
         waking_sleeping_nicknames.append(nickname);
-        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this, nickname]{
+        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
             waking_sleeping_nicknames.removeOne(nickname);
             emit hostsChanged();
         });
@@ -1611,7 +1730,11 @@ void QmlBackend::connectToHost(int index, QString nickname)
         QString expiry_s = settings->GetPsnAuthTokenExpiry();
         QString refresh = settings->GetPsnRefreshToken();
         if(expiry_s.isEmpty() || refresh.isEmpty())
+        {
+            window->setWindowAdjustable(true);
+            emit error(tr("PSN sign-in required"), tr("Sign in to PlayStation Network in Settings, then connect again."));
             return;
+        }
         QDateTime expiry = QDateTime::fromString(expiry_s, settings->GetTimeFormat());
         // give 1 minute buffer
         QDateTime now = QDateTime::currentDateTime().addSecs(60);
@@ -1619,7 +1742,8 @@ void QmlBackend::connectToHost(int index, QString nickname)
         {
             PSNToken *psnToken = new PSNToken(settings, this);
             connect(psnToken, &PSNToken::PSNTokenError, this, [this](const QString &error) {
-                qCWarning(chiakiGui) << "Could not refresh token. Automatic PSN Connection Unavailable!" << error;
+                window->setWindowAdjustable(true);
+                emit this->error(tr("PSN sign-in failed"), tr("Could not refresh your PSN sign-in: %1").arg(error));
             });
             connect(psnToken, &PSNToken::UnauthorizedError, this, &QmlBackend::psnCredsExpired);
             connect(psnToken, &PSNToken::PSNTokenSuccess, this, []() {
@@ -1639,14 +1763,17 @@ void QmlBackend::connectToHost(int index, QString nickname)
 
 void QmlBackend::stopSession(bool sleep)
 {
+    cancelRecovery();
+    settings->EndVideoTrial();
     if (!session)
         return;
 
     if (!session_info.nickname.isEmpty())
     {
         waking_sleeping_nicknames.append(session_info.nickname);
-        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this]{
-            waking_sleeping_nicknames.removeOne(session_info.nickname);
+        const QString nickname = session_info.nickname;
+        QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
+            waking_sleeping_nicknames.removeOne(nickname);
             emit hostsChanged();
         });
     }
@@ -1667,7 +1794,7 @@ void QmlBackend::sessionGoHome()
 
 void QmlBackend::enterPin(const QString &pin)
 {
-    qCInfo(chiakiGui) << "Set login pin " << pin;
+    qCInfo(chiakiGui) << "Setting console login PIN";
     if (session)
         session->SetLoginPIN(pin);
 }
@@ -1723,8 +1850,12 @@ void QmlBackend::stopAutoConnect()
             chiaki_log_ctx = nullptr;
             chiaki_log_mutex.unlock();
 
-            session->deleteLater();
+            if (session)
+                session->deleteLater();
             session = nullptr;
+            emit sessionChanged(nullptr);
+            setDiscoveryEnabled(true);
+            window->setWindowAdjustable(true);
         }
     }
     emit autoConnectChanged();
@@ -2340,7 +2471,7 @@ void QmlBackend::updateDiscoveryHosts()
                 QString nickname = host.host_name;
                 wakeup_nickname = nickname;
                 waking_sleeping_nicknames.append(nickname);
-                QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, [this, nickname]{
+                QTimer::singleShot(WAKEUP_PSN_IGNORE_SECONDS * 1000, this, [this, nickname]{
                     waking_sleeping_nicknames.removeOne(nickname);
                     emit hostsChanged();
                 });
@@ -2658,5 +2789,173 @@ void QmlBackend::refreshPsnToken()
 void PsnConnectionWorker::ConnectPsnConnection(StreamSession *session, const QString &duid, const bool &ps5)
 {
     ChiakiErrorCode result = session->ConnectPsnConnection(duid, ps5);
-    emit resultReady(result);
+    emit resultReady(session, result);
+}
+
+
+void QmlBackend::setRecoveryStatus(const QString &text, bool active)
+{
+    recovery_status = text;
+    recovery_active = active;
+    emit recoveryChanged();
+}
+void QmlBackend::cancelRecovery()
+{
+    ++recovery_generation;
+    recovery_cancelled = true;
+    recovery_pending = false;
+    recovery_timer.stop();
+    if(recovery_active) {
+        recordRecoveryEvent(QStringLiteral("cancelled"));
+        setRecoveryStatus(tr("Automatic recovery cancelled for this session."), false);
+        if(session) {
+            session->CancelPsnConnection(false);
+            session->Stop();
+        }
+    }
+}
+void QmlBackend::dismissRecovery() { setRecoveryStatus(QString(), recovery_active); }
+void QmlBackend::recordRecoveryEvent(const QString &event)
+{
+    QJsonObject entry;
+    entry["time_utc"] = QDateTime::currentDateTimeUtc().toString(Qt::ISODate);
+    entry["event"] = event;
+    entry["reconnect_attempt"] = recovery_attempts;
+    if(recovery_had_connection) {
+        entry["requested_bitrate_kbps"] = int(session_info.video_profile.bitrate);
+        entry["width"] = int(session_info.video_profile.width);
+        entry["height"] = int(session_info.video_profile.height);
+    }
+    if(session && session->IsConnected()) {
+        entry["packet_loss"] = session->GetAveragePacketLoss();
+        entry["lost_frames"] = session->GetFramesLost();
+        entry["measured_bitrate"] = session->GetMeasuredBitrate();
+    }
+    recovery_events.append(entry);
+    while(recovery_events.size() > 100) recovery_events.removeAt(0);
+    const QString dir = GetLogBaseDir();
+    if(!dir.isEmpty()) saveRecoveryDiagnostics(dir + "/recovery-latest.json");
+}
+void QmlBackend::saveRecoveryDiagnostics(const QString &path)
+{
+    // Allowlisted report: no raw log messages, IPs, tokens, keys or account names.
+    QJsonObject report;
+    report["format_version"] = 2;
+    report["build_revision"] = QStringLiteral("recovery-transport-v2");
+    report["chiaki_version"] = QStringLiteral(CHIAKI_VERSION);
+    report["adaptive_bitrate_enabled"] = settings->GetAdaptiveBitrate();
+    report["direct_ps5_controller_enabled"] = settings->GetDirectPS5Controller();
+    report["events"] = recovery_events;
+    QSaveFile out(path);
+    const QByteArray bytes = QJsonDocument(report).toJson();
+    if(!out.open(QIODevice::WriteOnly) || out.write(bytes) != bytes.size() || !out.commit())
+        setRecoveryStatus(tr("Could not save recovery diagnostics. Check the destination folder."), recovery_active);
+}
+void QmlBackend::exportRecoveryDiagnostics()
+{
+    const QString path = QFileDialog::getSaveFileName(nullptr, tr("Export recovery diagnostics"),
+        "chiaki-recovery.json", tr("JSON files (*.json)"));
+    if(!path.isEmpty()) saveRecoveryDiagnostics(path);
+}
+void QmlBackend::restoreWorkingVideoSettings()
+{
+    if(session || recovery_active) {
+        setRecoveryStatus(tr("Disconnect before restoring video settings."), recovery_active);
+        return;
+    }
+    setRecoveryStatus(settings->RestoreWorkingVideoSettings()
+        ? tr("Working video settings restored. Restart Chiaki to apply them.")
+        : tr("No working video settings saved yet. Play successfully for 60 seconds first."), false);
+}
+void QmlBackend::reconnectStream(const QString &reason)
+{
+    if(recovery_pending || recovery_cancelled) return;
+    if(recovery_attempts >= 3) {
+        recovery_cancelled = true;
+        recordRecoveryEvent(QStringLiteral("retry_limit_reached"));
+        setRecoveryStatus(tr("Stopped after three reconnect attempts. Check your connection and connect manually."), false);
+        if(session) session->Stop();
+        return;
+    }
+    ++recovery_attempts;
+    recovery_started_ms = chiaki_time_now_monotonic_us() / 1000;
+    recovery_pending = true;
+    recordRecoveryEvent(reason);
+    setRecoveryStatus(tr("%1. Reconnecting (%2/3)…").arg(reason).arg(recovery_attempts), true);
+    if(session) session->Stop();
+}
+void QmlBackend::monitorStreamHealth()
+{
+    if(!session || recovery_pending || recovery_cancelled) return;
+    const qint64 now = chiaki_time_now_monotonic_us() / 1000;
+    if(!session->IsConnected()) {
+        if(recovery_active && now - recovery_started_ms > 45000) {
+            recordRecoveryEvent(QStringLiteral("connection_timeout"));
+            reconnectStream(tr("Recovery connection timed out"));
+            session->CancelPsnConnection(false);
+        }
+        return;
+    }
+    const bool video = !(session_info.audio_video_disabled & 2) && session->GetFfmpegDecoder();
+    const bool audio = !(session_info.audio_video_disabled & 1);
+    if(session->GetCantDisplay() || (window && !window->isExposed())) {
+        recovery_healthy_since_ms = 0;
+        stream_health.reset(now); // protected scenes/minimization are not freezes
+        return;
+    }
+    const qint64 presented = window->lastPresentationUs() / 1000;
+    const qint64 video_heartbeat = qMin(recovery_last_frame_ms, presented);
+    const bool frames_recent = video_heartbeat && now - video_heartbeat < 2000;
+    if(frames_recent && session->GetAveragePacketLoss() < 0.01) {
+        if(!recovery_healthy_since_ms) recovery_healthy_since_ms = now;
+    } else recovery_healthy_since_ms = 0;
+    if(!video && recovery_active && now - recovery_started_ms >= 3000
+        && (!audio || (session->LastAudioUs() && now - session->LastAudioUs() / 1000 < 2000))) {
+        recordRecoveryEvent(QStringLiteral("connection_resumed"));
+        setRecoveryStatus(tr("Stream recovered successfully."), false);
+    }
+    if(recovery_healthy_since_ms && recovery_active && now - recovery_healthy_since_ms >= 2000) {
+        recordRecoveryEvent(QStringLiteral("video_resumed"));
+        setRecoveryStatus(tr("Stream recovered successfully."), false);
+    }
+    if(!recovery_saved_settings && recovery_healthy_since_ms && now - recovery_healthy_since_ms >= 60000) {
+        settings->SaveWorkingVideoSettings();
+        recovery_saved_settings = true;
+    }
+    if(audio && settings->GetStreamRecovery() && frames_recent && session->AudioOutputFailedUs()
+        && now - session->AudioOutputFailedUs() / 1000 >= 5000) {
+        reconnectStream(tr("Audio output device stopped"));
+        return;
+    }
+    const double loss = session->GetAveragePacketLoss();
+    if(loss >= 0.03 && now - recovery_last_warning_ms >= 30000 && !recovery_active) {
+        recovery_last_warning_ms = now;
+        recordRecoveryEvent(QStringLiteral("high_packet_loss"));
+    }
+    const auto action = stream_health.tick(now, video_heartbeat, session->LastAudioUs() / 1000,
+        loss, video, audio, settings->GetStreamRecovery(), settings->GetAdaptiveBitrate() && recovery_attempts < 3,
+        session_info.video_profile.bitrate, recovery_ceiling);
+    switch(action) {
+    case StreamHealth::RepairVideo: {
+        const bool decoded = recovery_last_frame_ms && now - recovery_last_frame_ms < 2000;
+        const bool receiving = now - session->LastVideoSampleUs() / 1000 < 2000;
+        recordRecoveryEvent(decoded ? QStringLiteral("presentation_stalled") : receiving ? QStringLiteral("decoder_delivery_stalled") : QStringLiteral("video_input_stalled"));
+        setRecoveryStatus(decoded ? tr("Video presentation stalled. Trying video recovery…") : receiving ? tr("Video decoding stalled. Trying video recovery…")
+            : tr("Video input stalled. Requesting a fresh frame…"), true);
+        recovery_started_ms = now;
+        const bool requested = session->RepairVideo();
+        recordRecoveryEvent(requested ? QStringLiteral("video_repair_requested") : QStringLiteral("video_repair_request_failed"));
+        window->resetPlaceboQueue();
+        break;
+    }
+    case StreamHealth::ReconnectVideo: reconnectStream(tr("Video recovery did not resume frames")); break;
+    case StreamHealth::ReconnectAudio: reconnectStream(tr("Audio input stalled while video continued")); break;
+    case StreamHealth::LowerBitrate:
+        session_info.video_profile.bitrate = StreamHealth::lower(session_info.video_profile.bitrate, recovery_ceiling);
+        reconnectStream(tr("Reducing bitrate to %1 Kbps").arg(session_info.video_profile.bitrate)); break;
+    case StreamHealth::RaiseBitrate:
+        session_info.video_profile.bitrate = StreamHealth::raise(session_info.video_profile.bitrate, recovery_ceiling);
+        reconnectStream(tr("Restoring bitrate to %1 Kbps").arg(session_info.video_profile.bitrate)); break;
+    default: break;
+    }
 }

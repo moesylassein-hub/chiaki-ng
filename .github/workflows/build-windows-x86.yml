@@ -33,9 +33,9 @@ jobs:
       - name: Setup Vulkan
         run: |
           $ProgressPreference = 'SilentlyContinue'
-          $ver = (Invoke-WebRequest -Uri "https://vulkan.lunarg.com/sdk/latest.json" | ConvertFrom-Json).windows
+          $ver = (Invoke-WebRequest -UseBasicParsing -Uri "https://vulkan.lunarg.com/sdk/latest.json" | ConvertFrom-Json).windows
           echo Version $ver
-          Invoke-WebRequest -Uri "https://sdk.lunarg.com/sdk/download/$ver/windows/vulkansdk-windows-X64-$ver.exe" -OutFile VulkanSDK.exe
+          Invoke-WebRequest -UseBasicParsing -Uri "https://sdk.lunarg.com/sdk/download/$ver/windows/vulkansdk-windows-X64-$ver.exe" -OutFile VulkanSDK.exe
           echo Downloaded
           .\VulkanSDK.exe --root ${{ env.VULKAN_SDK }}  --accept-licenses --default-answer --confirm-command install
 
@@ -94,14 +94,36 @@ jobs:
           cmake --build build --config Release
           cmake --install build
 
-      - name: Setup shaderc
+      - name: Build shaderc
         run: |
-          $ProgressPreference = 'SilentlyContinue'
-          $url = ((Invoke-WebRequest -UseBasicParsing -Uri "https://storage.googleapis.com/shaderc/badges/build_link_windows_vs2019_release.html").Content | Select-String -Pattern 'url=(.*)"').Matches.Groups[1].Value
-          Invoke-WebRequest -UseBasicParsing -Uri $url -OutFile .\shaderc.zip
-          Expand-Archive -LiteralPath "shaderc.zip" -DestinationPath "."
-          cp "./install/*" "./${{ env.dep_folder }}" -Force -Recurse
-          rm "./install" -r -force
+          # The former Google Storage prebuilt download is no longer available.
+          git clone --depth 1 --branch v2025.3 https://github.com/google/shaderc.git shaderc
+          if ($LASTEXITCODE -ne 0) { throw "Shaderc clone failed" }
+          Push-Location shaderc
+          try {
+            & "$env:pythonLocation\python.exe" utils/git-sync-deps
+            if ($LASTEXITCODE -ne 0) { throw "Shaderc dependency sync failed" }
+          } finally {
+            Pop-Location
+          }
+          cmake -S shaderc -B shaderc/build -G Ninja `
+            -DCMAKE_BUILD_TYPE=Release `
+            -DCMAKE_INSTALL_PREFIX="${{ github.workspace }}/${{ env.dep_folder }}" `
+            -DCMAKE_INSTALL_LIBDIR=lib `
+            -DSHADERC_SKIP_TESTS=ON `
+            -DSHADERC_SKIP_EXAMPLES=ON `
+            -DSHADERC_SKIP_EXECUTABLES=ON `
+            -DSHADERC_SKIP_COPYRIGHT_CHECK=ON `
+            -DSHADERC_ENABLE_SHARED_CRT=ON `
+            -DSHADERC_ENABLE_WERROR_COMPILE=OFF
+          if ($LASTEXITCODE -ne 0) { throw "Shaderc configure failed" }
+          cmake --build shaderc/build --config Release --parallel 2
+          if ($LASTEXITCODE -ne 0) { throw "Shaderc build failed" }
+          cmake --install shaderc/build --config Release
+          if ($LASTEXITCODE -ne 0) { throw "Shaderc install failed" }
+          foreach ($file in @('bin/shaderc_shared.dll', 'lib/shaderc_shared.lib', 'lib/pkgconfig/shaderc.pc', 'include/shaderc/shaderc.h')) {
+            if (!(Test-Path "${{ env.dep_folder }}/$file")) { throw "Missing shaderc output: $file" }
+          }
 
       - name: Make build directory
         run: |

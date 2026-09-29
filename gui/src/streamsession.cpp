@@ -13,6 +13,7 @@
 
 #include <QKeyEvent>
 #include <QMutexLocker>
+#include <QPointer>
 #include <QtMath>
 #include <atomic>
 
@@ -36,6 +37,7 @@
 #define PS5_TOUCHPAD_MAX_X 1919.0f
 #define PS5_TOUCHPAD_MAX_Y 1079.0f
 #define SESSION_RETRY_SECONDS 20
+#define SESSION_RETRY_DELAY_MS 1000
 #define HAPTIC_RUMBLE_MIN_STRENGTH 100
 
 #define MICROPHONE_SAMPLES 480
@@ -304,6 +306,7 @@ StreamSessionConnectInfo::StreamSessionConnectInfo(
 	this->keyboard_controller_enabled = keyboard_controller_enabled_setting;
 	this->mouse_touch_enabled = settings->GetMouseTouchEnabled();
 	this->enable_keyboard = false;
+	this->direct_ps5_controller = chiaki_target_is_ps5(target) && settings->GetDirectPS5Controller();
 	this->enable_dualsense = true;
 	this->enable_idr_on_fec_failure = settings->GetIDROnFECFailureEnabled();
 	this->rumble_haptics_intensity = settings->GetRumbleHapticsIntensity();
@@ -386,6 +389,17 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	rumble_haptics_connected(false),
 	rumble_haptics_on(false)
 {
+	retry_timer.setSingleShot(true);
+	connect(&retry_timer, &QTimer::timeout, this, [this]() {
+		if (stop_requested)
+			return;
+		try {
+			Start();
+		} catch (const Exception &e) {
+			connect_timer.invalidate();
+			emit SessionQuit(CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, QString::fromUtf8(e.what()));
+		}
+	});
 	mic_buf.buf = nullptr;
 	connected = false;
 	muted = true;
@@ -428,6 +442,8 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 		{
 			QString log = QString::fromUtf8(chiaki_log_sniffer_get_buffer(&sniffer));
 			chiaki_log_sniffer_fini(&sniffer);
+			delete ffmpeg_decoder;
+			ffmpeg_decoder = nullptr;
 			throw ChiakiException("Failed to initialize FFMPEG Decoder:\n" + log);
 		}
 		chiaki_log_sniffer_fini(&sniffer);
@@ -474,6 +490,7 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	chiaki_connect_info.enable_keyboard = false;
 	chiaki_connect_info.enable_idr_on_fec_failure = connect_info.enable_idr_on_fec_failure;
 	chiaki_connect_info.enable_dualsense = connect_info.enable_dualsense;
+	chiaki_connect_info.disable_remote_controller = connect_info.direct_ps5_controller;
 	chiaki_connect_info.packet_loss_max = connect_info.packet_loss_max;
 	chiaki_connect_info.auto_regist = connect_info.auto_regist;
 	chiaki_connect_info.audio_video_disabled = connect_info.audio_video_disabled;
@@ -582,7 +599,11 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	else
 	{
 #endif
-		chiaki_session_set_video_sample_cb(&session, chiaki_ffmpeg_decoder_video_sample_cb, ffmpeg_decoder);
+		chiaki_session_set_video_sample_cb(&session, [](uint8_t *buf, size_t size, int32_t lost, bool recovered, void *user) {
+            auto *self = static_cast<StreamSession *>(user);
+            self->last_video_sample_us.storeRelaxed(chiaki_time_now_monotonic_us());
+            return chiaki_ffmpeg_decoder_video_sample_cb(buf, size, lost, recovered, self->ffmpeg_decoder);
+        }, this);
 #if CHIAKI_LIB_ENABLE_PI_DECODER
 	}
 #endif
@@ -670,20 +691,30 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	packet_loss_timer->setInterval(200);
 	packet_loss_timer->start();
 	connect(packet_loss_timer, &QTimer::timeout, this, [this]() {
-		if(packet_loss_history.size() > 10)
-			packet_loss_history.takeFirst();
-		packet_loss_history.append(session.stream_connection.congestion_control.packet_loss);
-		double packet_loss = 0;
-		for(auto v : std::as_const(packet_loss_history))
-			packet_loss += v / packet_loss_history.size();
+		uint64_t received, lost;
+		chiaki_packet_stats_get_totals(&session.stream_connection.packet_stats, &received, &lost);
+		if(packet_loss_history.size() >= 10) packet_loss_history.takeFirst();
+		packet_loss_history.append(qMakePair(quint64(received - packet_received_previous), quint64(lost - packet_lost_previous)));
+		packet_received_previous = received;
+		packet_lost_previous = lost;
+		uint64_t window_received = 0, window_lost = 0;
+		for(const auto &sample : std::as_const(packet_loss_history)) {
+			window_received += sample.first;
+			window_lost += sample.second;
+		}
+		const double packet_loss = window_received + window_lost
+			? double(window_lost) / double(window_received + window_lost) : 0.0;
 		if(packet_loss != average_packet_loss)
 		{
 			average_packet_loss = packet_loss;
 			emit AveragePacketLossChanged();
 		}
-		if(session.stream_connection.video_receiver)
+		chiaki_mutex_lock(&session.stream_connection.state_mutex);
+		const int32_t total = session.stream_connection.video_receiver
+			? chiaki_video_receiver_get_frames_lost_total(session.stream_connection.video_receiver) : -1;
+		chiaki_mutex_unlock(&session.stream_connection.state_mutex);
+		if(total >= 0)
 		{
-			int32_t total = chiaki_video_receiver_get_frames_lost_total(session.stream_connection.video_receiver);
 			if(total > pending_frames_lost)
 			{
 				frames_lost += total - pending_frames_lost;
@@ -698,7 +729,18 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 
 StreamSession::~StreamSession()
 {
+	retry_timer.stop();
+	stop_requested = true;
+	emit FfmpegDecoderClosing();
+	log.PrepareShutdown();
 	mic_active.storeRelaxed(false);
+	// Stop producers before closing audio devices and freeing decoder resources.
+	if(session_started)
+	{
+		chiaki_session_stop(&session);
+		chiaki_session_join(&session);
+		session_started = false;
+	}
 	StopAudioOutDrainThread();
 	if(audio_out)
 		SDL_CloseAudioDevice(audio_out);
@@ -717,12 +759,6 @@ StreamSession::~StreamSession()
 	StopSdeckHaptics();
 #endif
 
-	// Prepare log for shutdown BEFORE joining session threads
-	// This prevents crashes from log callbacks during shutdown
-	log.PrepareShutdown();
-
-	if(session_started)
-		chiaki_session_join(&session);
 	chiaki_session_fini(&session);
 	chiaki_opus_decoder_fini(&opus_decoder);
 	chiaki_opus_encoder_fini(&opus_encoder);
@@ -800,8 +836,11 @@ StreamSession::~StreamSession()
 
 void StreamSession::Start()
 {
+	if (stop_requested || session_started)
+		return;
 	if(!connect_timer.isValid())
 		connect_timer.start();
+	session.quit_reason = CHIAKI_QUIT_REASON_NONE;
 	ChiakiErrorCode err = chiaki_session_start(&session);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
@@ -812,8 +851,16 @@ void StreamSession::Start()
 
 void StreamSession::Stop()
 {
+	if (stop_requested)
+		return;
+	stop_requested = true;
+	const bool waiting_for_retry = retry_timer.isActive();
+	retry_timer.stop();
+	connect_timer.invalidate();
 	mic_active.storeRelaxed(false);
 	chiaki_session_stop(&session);
+	if (waiting_for_retry)
+		emit SessionQuit(CHIAKI_QUIT_REASON_STOPPED, QString());
 }
 
 void StreamSession::GoToBed()
@@ -1188,9 +1235,12 @@ void StreamSession::UpdateGamepads()
 			{
 				haptics_handheld--;
 			}
-			QTimer::singleShot(1000, this, [this, controller] {
-				controller->ChangePlayerIndex(player_index);
-				controller->ChangeLEDColor(led_color);
+			QPointer<Controller> pending_controller(controller);
+			QTimer::singleShot(1000, this, [this, pending_controller] {
+				if (!pending_controller || !pending_controller->IsConnected())
+					return;
+				pending_controller->ChangePlayerIndex(player_index);
+				pending_controller->ChangeLEDColor(led_color);
 			});
 			if (controller->IsDualSense() || controller->IsDualSenseEdge())
 			{
@@ -1908,6 +1958,7 @@ void StreamSession::StopSdeckHaptics()
 
 void StreamSession::PushAudioFrame(int16_t *og_buf, size_t samples_count)
 {
+    last_audio_us.storeRelaxed(chiaki_time_now_monotonic_us());
 	if(!audio_out || !audio_volume)
 		return;
 
@@ -2007,6 +2058,12 @@ void StreamSession::QueueAudioOutData(const QByteArray &audio_data)
 
 void StreamSession::DrainAudioOutRingBuffer()
 {
+    if(audio_out && SDL_GetAudioDeviceStatus(audio_out) == SDL_AUDIO_STOPPED) {
+        if(!audio_output_failed_us.loadRelaxed())
+            audio_output_failed_us.storeRelaxed(chiaki_time_now_monotonic_us());
+        return;
+    }
+    audio_output_failed_us.storeRelaxed(0);
 	const size_t target_queue_size = audio_buffer_size * 2;
 
 	while(audio_out)
@@ -2329,20 +2386,42 @@ void StreamSession::Event(ChiakiEvent *event)
 	switch(event->type)
 	{
 		case CHIAKI_EVENT_CONNECTED:
-			connect_timer.invalidate();
-			connected = true;
-			emit ConnectedChanged();
+			QMetaObject::invokeMethod(this, [this]() {
+				if (stop_requested)
+					return;
+				connect_timer.invalidate();
+				connected = true;
+				emit ConnectedChanged();
+			}, Qt::QueuedConnection);
 			break;
-		case CHIAKI_EVENT_QUIT:
-			if(!connected && !holepunch_session && chiaki_quit_reason_is_error(event->quit.reason) && connect_timer.elapsed() < SESSION_RETRY_SECONDS * 1000)
-			{
-				QTimer::singleShot(SESSION_RETRY_SECONDS / 3, this, &StreamSession::Start);
-				return;
-			}
-			connected = false;
-			emit ConnectedChanged();
-			emit SessionQuit(event->quit.reason, event->quit.reason_str ? QString::fromUtf8(event->quit.reason_str) : QString());
+		case CHIAKI_EVENT_QUIT: {
+			const ChiakiQuitReason reason = event->quit.reason;
+			const QString reason_str = event->quit.reason_str ? QString::fromUtf8(event->quit.reason_str) : QString();
+			QMetaObject::invokeMethod(this, [this, reason, reason_str]() {
+				// This runs on the GUI thread, after the worker's quit callback.
+				// Join before reusing the session thread handle on a retry.
+				if (session_started)
+				{
+					chiaki_session_join(&session);
+					session_started = false;
+				}
+				// Only retry a refused connection (e.g. a console still waking).
+				// Authentication and established-stream failures require user action.
+				if (!stop_requested && !connected && !holepunch_session
+					&& reason == CHIAKI_QUIT_REASON_SESSION_REQUEST_CONNECTION_REFUSED
+					&& connect_timer.isValid()
+					&& connect_timer.elapsed() + SESSION_RETRY_DELAY_MS < SESSION_RETRY_SECONDS * 1000)
+				{
+					retry_timer.start(SESSION_RETRY_DELAY_MS);
+					return;
+				}
+				connect_timer.invalidate();
+				connected = false;
+				emit ConnectedChanged();
+				emit SessionQuit(stop_requested ? CHIAKI_QUIT_REASON_STOPPED : reason, reason_str);
+			}, Qt::QueuedConnection);
 			break;
+		}
 		case CHIAKI_EVENT_REGIST:
 			emit AutoRegistSucceeded(event->host);
 			break;
@@ -2746,7 +2825,8 @@ ChiakiErrorCode StreamSession::ConnectPsnConnection(QString duid, bool ps5)
 
 void StreamSession::CancelPsnConnection(bool stop_thread)
 {
-	chiaki_holepunch_main_thread_cancel(holepunch_session, stop_thread);
+	if (holepunch_session)
+		chiaki_holepunch_main_thread_cancel(holepunch_session, stop_thread);
 }
 
 void StreamSession::TriggerFfmpegFrameAvailable()
@@ -2859,4 +2939,18 @@ static void FfmpegFrameCb(ChiakiFfmpegDecoder *decoder, void *user)
 {
 	auto session = reinterpret_cast<StreamSession *>(user);
 	StreamSessionPrivate::TriggerFfmpegFrameAvailable(session);
+}
+
+
+bool StreamSession::RepairVideo()
+{
+    if(stop_requested || !connected || !ffmpeg_decoder) return false;
+    // Do not block the GUI on a driver that is stuck inside the decoder.
+    if(chiaki_mutex_trylock(&ffmpeg_decoder->mutex) == CHIAKI_ERR_SUCCESS) {
+        avcodec_flush_buffers(ffmpeg_decoder->codec_context);
+        chiaki_mutex_unlock(&ffmpeg_decoder->mutex);
+        decoder_flush_generation.fetchAndAddRelaxed(1);
+    }
+    // Even a busy decoder must not prevent the console receiving the IDR request.
+    return RequestIDR();
 }

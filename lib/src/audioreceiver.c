@@ -135,7 +135,8 @@ CHIAKI_EXPORT void chiaki_audio_receiver_av_packet(ChiakiAudioReceiver *audio_re
 	}
 
 	if(audio_receiver->packet_stats)
-		chiaki_packet_stats_push_seq(audio_receiver->packet_stats, packet->frame_index);
+		for(size_t i = 0; i < source_units_count; i++)
+			chiaki_packet_stats_push_seq(audio_receiver->packet_stats, (ChiakiSeqNum16)(packet->frame_index + i));
 }
 
 static void chiaki_audio_receiver_frame(ChiakiAudioReceiver *audio_receiver, ChiakiSeqNum16 frame_index, bool is_haptics, uint8_t *buf, size_t buf_size)

@@ -279,27 +279,62 @@ Item {
         }
     }
 
-    RoundButton {
-        anchors {
-            right: parent.right
-            top: parent.top
-            margins: 40
+    // Passive warning: never grabs keyboard, controller or mouse focus.
+    readonly property bool highPacketLoss: Chiaki.session
+        && Chiaki.session.averagePacketLoss > 0
+        && Chiaki.session.averagePacketLoss >= Chiaki.settings.wifiDroppedNotif * 0.01
+    readonly property bool showPacketLoss: Chiaki.session && !sessionLoading && !sessionError
+        && (highPacketLoss || packetLossHold.running)
+    onHighPacketLossChanged: {
+        if (highPacketLoss) packetLossHold.stop();
+        else if (Chiaki.session) packetLossHold.restart();
+    }
+    Timer { id: packetLossHold; interval: 3000 }
+
+    Component {
+        id: packetLossBadge
+        Rectangle {
+            width: 44
+            height: 44
+            radius: 10
+            color: "#80202020"
+            Image {
+                anchors.centerIn: parent
+                width: 26
+                height: 26
+                source: "qrc:/icons/packet-loss.svg"
+                sourceSize: Qt.size(26, 26)
+            }
         }
-        icon.source: "qrc:/icons/discover-off-24px.svg"
-        icon.width: 50
-        icon.height: 50
-        padding: 20
-        checked: true
-        opacity: networkIndicatorTimer.running ? 0.7 : 0.0
-        visible: opacity
-        Material.background: Material.accent
-
+    }
+    Loader {
+        anchors.top: parent.top
+        anchors.right: parent.right
+        anchors.margins: 16
+        sourceComponent: packetLossBadge
+        active: !view.useSeparateMenuWindow
+        opacity: view.showPacketLoss ? 0.7 : 0.0
+        visible: active && opacity > 0
         Behavior on opacity { NumberAnimation { duration: 400 } }
-
-        Timer {
-            id: networkIndicatorTimer
-            running: Chiaki.session?.averagePacketLoss > (Chiaki.settings.wifiDroppedNotif * 0.01)
-            interval: 400
+    }
+    // Native overlay is needed above the Vulkan video surface.
+    Window {
+        transientParent: Chiaki.window
+        flags: Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
+            | Qt.WindowDoesNotAcceptFocus | Qt.WindowTransparentForInput
+        color: "transparent"
+        width: 44
+        height: 44
+        x: Chiaki.window.x + Chiaki.window.width - width - 16
+        y: Chiaki.window.y + 16
+        visible: view.useSeparateMenuWindow && (view.showPacketLoss || nativePacketLossBadge.opacity > 0) && Chiaki.window
+            && Chiaki.window.visible && Chiaki.window.active
+            && Chiaki.window.visibility !== Window.Minimized
+        Loader {
+            id: nativePacketLossBadge
+            sourceComponent: packetLossBadge
+            opacity: view.showPacketLoss ? 0.7 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 400 } }
         }
     }
 

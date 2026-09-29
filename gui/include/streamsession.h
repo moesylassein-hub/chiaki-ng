@@ -95,6 +95,7 @@ class SdeckHapticsWorker;
 		bool enable_keyboard;
 		bool keyboard_controller_enabled;
 		bool mouse_touch_enabled;
+		bool direct_ps5_controller = false;
 		bool enable_dualsense;
 		bool auto_regist;
 		float haptic_override;
@@ -165,6 +166,9 @@ class StreamSession : public QObject
 		ChiakiSession session;
 		ChiakiOpusDecoder opus_decoder;
 		ChiakiOpusEncoder opus_encoder;
+        QAtomicInteger<qint64> audio_output_failed_us{0};
+        QAtomicInteger<qint64> last_audio_us{0};
+        QAtomicInteger<qint64> last_video_sample_us{0};
 		bool connected;
 		bool muted;
 		bool mic_connected;
@@ -183,7 +187,9 @@ class StreamSession : public QObject
 		int32_t frames_lost = 0;
 		int32_t pending_frames_lost = 0;
 		double packet_loss_max = 0;
-		QList<double> packet_loss_history;
+		QList<QPair<quint64, quint64>> packet_loss_history;
+        uint64_t packet_received_previous = 0;
+        uint64_t packet_lost_previous = 0;
 		QAtomicInteger<quint64> decoder_flush_generation{0};
 		bool cant_display = false;
 		int haptics_handheld;
@@ -242,6 +248,8 @@ class StreamSession : public QObject
 		RumbleHapticsIntensity rumble_haptics_intensity;
 		bool start_mic_unmuted;
 		bool session_started;
+		bool stop_requested = false;
+		QTimer retry_timer;
 
 		ChiakiFfmpegDecoder *ffmpeg_decoder;
 		void TriggerFfmpegFrameAvailable();
@@ -332,6 +340,7 @@ class StreamSession : public QObject
 		explicit StreamSession(const StreamSessionConnectInfo &connect_info, QObject *parent = nullptr);
 		~StreamSession();
 
+        bool IsStopRequested() const { return stop_requested; }
 		bool IsConnected()	{ return connected; }
 		bool IsConnecting()	{ return connect_timer.isValid(); }
 
@@ -339,6 +348,10 @@ class StreamSession : public QObject
 		void Stop();
 		void GoToBed();
 	Q_INVOKABLE bool RequestIDR();
+        bool RepairVideo();
+        qint64 AudioOutputFailedUs() const { return audio_output_failed_us.loadRelaxed(); }
+        qint64 LastAudioUs() const { return last_audio_us.loadRelaxed(); }
+        qint64 LastVideoSampleUs() const { return last_video_sample_us.loadRelaxed(); }
 		void ToggleMute();
 		void SetLoginPIN(const QString &pin);
 		void GoHome();
@@ -378,6 +391,7 @@ class StreamSession : public QObject
 
 	signals:
 		void FfmpegFrameAvailable();
+		void FfmpegDecoderClosing();
 		void RumbleHapticPushed(uint16_t strength);
 #if CHIAKI_GUI_ENABLE_STEAMDECK_NATIVE
 		void SdeckHapticPushed(haptic_packet_t packetl, haptic_packet_t packetr);

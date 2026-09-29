@@ -1,4 +1,5 @@
 import QtQuick
+import QtQuick.Window
 import QtQuick.Layouts
 import QtQuick.Controls
 import QtQuick.Controls.Material
@@ -7,6 +8,43 @@ import org.streetpea.chiaking
 
 Item {
     id: root
+    Window {
+        id: recoveryWindow
+        title: qsTr("Stream health")
+        width: 520
+        height: 180
+        color: "#202020"
+        flags: Qt.Dialog | Qt.WindowStaysOnTopHint
+        visible: Chiaki.recoveryStatus.length > 0
+        onClosing: function(close) {
+            if (Chiaki.recoveryActive) Chiaki.cancelRecovery();
+            Chiaki.dismissRecovery();
+        }
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 20
+            Label {
+                text: Chiaki.recoveryStatus
+                color: "white"
+                wrapMode: Text.WordWrap
+                Layout.fillWidth: true
+                Layout.fillHeight: true
+            }
+            RowLayout {
+                Button {
+                    text: Chiaki.recoveryActive ? qsTr("Cancel recovery") : qsTr("Dismiss")
+                    onClicked: {
+                        if (Chiaki.recoveryActive) Chiaki.cancelRecovery();
+                        Chiaki.dismissRecovery();
+                    }
+                }
+                Button {
+                    text: qsTr("Export diagnostics")
+                    onClicked: Chiaki.exportRecoveryDiagnostics()
+                }
+            }
+        }
+    }
     property list<Item> restoreFocusItems
     property bool initialAsk: false
     readonly property bool preferSeparateStreamSettingsWindows: Chiaki.window.runtimeRendererBackend === 1 && Chiaki.session

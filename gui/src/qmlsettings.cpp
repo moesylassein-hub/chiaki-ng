@@ -1896,6 +1896,9 @@ void QmlSettings::refreshAllKeys()
     emit buttonsByPositionChanged();
     emit allowJoystickBackgroundEventsChanged();
     emit startMicUnmutedChanged();
+    emit streamRecoveryChanged();
+    emit directPS5ControllerChanged();
+    emit adaptiveBitrateChanged();
     emit showStreamStatsChanged();
     emit streamerModeChanged();
 #ifdef CHIAKI_GUI_ENABLE_STEAMDECK_NATIVE
