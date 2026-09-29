@@ -319,20 +319,23 @@ Item {
     }
     // Native overlay is needed above the Vulkan video surface.
     Window {
-        transientParent: view.hostWindow
+        transientParent: Chiaki.window
         flags: Qt.ToolTip | Qt.FramelessWindowHint | Qt.WindowStaysOnTopHint
             | Qt.WindowDoesNotAcceptFocus | Qt.WindowTransparentForInput
         color: "transparent"
         width: 44
         height: 44
-        x: view.separateStatsX + view.separateStatsWidth - width - 16
-        y: view.separateStatsY + 16
-        opacity: view.showPacketLoss ? 0.7 : 0.0
-        visible: view.useSeparateMenuWindow && opacity > 0 && view.hostWindow
-            && view.hostWindow.visible && view.hostWindow.active
-            && view.hostWindow.visibility !== Window.Minimized
-        Behavior on opacity { NumberAnimation { duration: 400 } }
-        Loader { sourceComponent: packetLossBadge }
+        x: Chiaki.window.x + Chiaki.window.width - width - 16
+        y: Chiaki.window.y + 16
+        visible: view.useSeparateMenuWindow && (view.showPacketLoss || nativePacketLossBadge.opacity > 0) && Chiaki.window
+            && Chiaki.window.visible && Chiaki.window.active
+            && Chiaki.window.visibility !== Window.Minimized
+        Loader {
+            id: nativePacketLossBadge
+            sourceComponent: packetLossBadge
+            opacity: view.showPacketLoss ? 0.7 : 0.0
+            Behavior on opacity { NumberAnimation { duration: 400 } }
+        }
     }
 
     Component {

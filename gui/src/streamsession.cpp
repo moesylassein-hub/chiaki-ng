@@ -710,9 +710,11 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 			emit AveragePacketLossChanged();
 		}
 		chiaki_mutex_lock(&session.stream_connection.state_mutex);
-		if(session.stream_connection.video_receiver)
+		const int32_t total = session.stream_connection.video_receiver
+			? chiaki_video_receiver_get_frames_lost_total(session.stream_connection.video_receiver) : -1;
+		chiaki_mutex_unlock(&session.stream_connection.state_mutex);
+		if(total >= 0)
 		{
-			int32_t total = chiaki_video_receiver_get_frames_lost_total(session.stream_connection.video_receiver);
 			if(total > pending_frames_lost)
 			{
 				frames_lost += total - pending_frames_lost;
@@ -720,7 +722,6 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 			}
 			pending_frames_lost = total;
 		}
-		chiaki_mutex_unlock(&session.stream_connection.state_mutex);
 	});
 
 	StartAudioOutDrainThread();
