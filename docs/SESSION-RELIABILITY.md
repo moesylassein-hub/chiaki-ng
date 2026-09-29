@@ -182,3 +182,8 @@ remains optional and disabled by default.
 wraparound, duplicates, reordering, concurrent sampling and transport-failure wait
 predicates using AddressSanitizer and UndefinedBehaviorSanitizer. These checks
 cannot establish the cause of physical packet loss or replace a real PS5 test.
+
+Packet-loss warnings use a small, translucent, input-transparent badge at the
+top right. It follows the existing dropped-packet notification threshold, fades
+after three seconds below that threshold, and works above the Vulkan surface.
+High-loss events still enter diagnostics but no longer open the recovery dialog.

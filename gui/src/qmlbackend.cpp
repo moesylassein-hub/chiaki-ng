@@ -2931,7 +2931,6 @@ void QmlBackend::monitorStreamHealth()
     if(loss >= 0.03 && now - recovery_last_warning_ms >= 30000 && !recovery_active) {
         recovery_last_warning_ms = now;
         recordRecoveryEvent(QStringLiteral("high_packet_loss"));
-        setRecoveryStatus(tr("Stream packet loss is high (%1%). Check both devices’ connections or try a lower bitrate.").arg(loss * 100.0, 0, 'f', 1), false);
     }
     const auto action = stream_health.tick(now, video_heartbeat, session->LastAudioUs() / 1000,
         loss, video, audio, settings->GetStreamRecovery(), settings->GetAdaptiveBitrate() && recovery_attempts < 3,
