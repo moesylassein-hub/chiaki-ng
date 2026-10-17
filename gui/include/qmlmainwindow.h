@@ -165,6 +165,7 @@ public slots:
     void updateVSync();
     void updateVulkanDeferredSwap();
     void show();
+    qint64 lastPresentationUs() const { return last_present_complete_us.loadAcquire(); }
     void presentFrame(ChiakiFfmpegFrame frame, int32_t frames_lost, qint64 decoder_delivery_us = 0);
 
     AVBufferRef *vulkanHwDeviceCtx();

@@ -263,6 +263,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_init(ChiakiSession *session, Chiaki
 	session->connect_info.video_profile_auto_downgrade = connect_info->video_profile_auto_downgrade;
 	session->connect_info.enable_keyboard = connect_info->enable_keyboard;
 	session->connect_info.enable_dualsense = connect_info->enable_dualsense;
+	session->connect_info.disable_remote_controller = connect_info->ps5 && connect_info->disable_remote_controller;
 	session->connect_info.enable_idr_on_fec_failure = connect_info->enable_idr_on_fec_failure;
 
 	return CHIAKI_ERR_SUCCESS;
@@ -338,6 +339,8 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_request_idr(ChiakiSession *session)
 
 CHIAKI_EXPORT ChiakiErrorCode chiaki_session_set_controller_state(ChiakiSession *session, ChiakiControllerState *state)
 {
+	if(session->connect_info.disable_remote_controller)
+		return CHIAKI_ERR_SUCCESS;
 	ChiakiErrorCode err = chiaki_mutex_lock(&session->stream_connection.feedback_sender_mutex);
 	if(err != CHIAKI_ERR_SUCCESS)
 		return err;

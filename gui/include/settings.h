@@ -227,6 +227,8 @@ class Settings : public QObject
 		void LoadProfiles();
 		void SaveProfiles();
 
+	private:
+        bool video_settings_restored = false;
 	public:
 		explicit Settings(const QString &conf, QObject *parent = nullptr);
 
@@ -255,6 +257,18 @@ class Settings : public QObject
 
 		bool GetAddSteamShortcutAsk() const           { return settings.value("settings/add_steam_shortcut_ask", true).toBool(); }
 		void SetAddSteamShortcutAsk(bool asked)       { settings.setValue("settings/add_steam_shortcut_ask", asked); }
+
+        bool GetStreamRecovery() const { return settings.value("settings/stream_recovery", true).toBool(); }
+        void SetStreamRecovery(bool v) { settings.setValue("settings/stream_recovery", v); }
+        bool GetDirectPS5Controller() const { return settings.value("settings/direct_ps5_controller", false).toBool(); }
+        void SetDirectPS5Controller(bool v) { settings.setValue("settings/direct_ps5_controller", v); }
+        bool GetAdaptiveBitrate() const { return settings.value("settings/adaptive_bitrate", false).toBool(); }
+        void SetAdaptiveBitrate(bool v) { settings.setValue("settings/adaptive_bitrate", v); }
+        void SaveWorkingVideoSettings();
+        bool RestoreWorkingVideoSettings();
+        void BeginVideoTrial();
+        void EndVideoTrial();
+        bool VideoSettingsRestored() const { return video_settings_restored; }
 
 		bool GetLogVerbose() const 				{ return settings.value("settings/log_verbose", false).toBool(); }
 		void SetLogVerbose(bool enabled)		{ settings.setValue("settings/log_verbose", enabled); }

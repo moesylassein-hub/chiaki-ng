@@ -13,6 +13,7 @@
 
 #include <QKeyEvent>
 #include <QMutexLocker>
+#include <QPointer>
 #include <QtMath>
 #include <atomic>
 
@@ -305,6 +306,7 @@ StreamSessionConnectInfo::StreamSessionConnectInfo(
 	this->keyboard_controller_enabled = keyboard_controller_enabled_setting;
 	this->mouse_touch_enabled = settings->GetMouseTouchEnabled();
 	this->enable_keyboard = false;
+	this->direct_ps5_controller = chiaki_target_is_ps5(target) && settings->GetDirectPS5Controller();
 	this->enable_dualsense = true;
 	this->enable_idr_on_fec_failure = settings->GetIDROnFECFailureEnabled();
 	this->rumble_haptics_intensity = settings->GetRumbleHapticsIntensity();
@@ -440,6 +442,8 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 		{
 			QString log = QString::fromUtf8(chiaki_log_sniffer_get_buffer(&sniffer));
 			chiaki_log_sniffer_fini(&sniffer);
+			delete ffmpeg_decoder;
+			ffmpeg_decoder = nullptr;
 			throw ChiakiException("Failed to initialize FFMPEG Decoder:\n" + log);
 		}
 		chiaki_log_sniffer_fini(&sniffer);
@@ -486,6 +490,7 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	chiaki_connect_info.enable_keyboard = false;
 	chiaki_connect_info.enable_idr_on_fec_failure = connect_info.enable_idr_on_fec_failure;
 	chiaki_connect_info.enable_dualsense = connect_info.enable_dualsense;
+	chiaki_connect_info.disable_remote_controller = connect_info.direct_ps5_controller;
 	chiaki_connect_info.packet_loss_max = connect_info.packet_loss_max;
 	chiaki_connect_info.auto_regist = connect_info.auto_regist;
 	chiaki_connect_info.audio_video_disabled = connect_info.audio_video_disabled;
@@ -594,7 +599,11 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	else
 	{
 #endif
-		chiaki_session_set_video_sample_cb(&session, chiaki_ffmpeg_decoder_video_sample_cb, ffmpeg_decoder);
+		chiaki_session_set_video_sample_cb(&session, [](uint8_t *buf, size_t size, int32_t lost, bool recovered, void *user) {
+            auto *self = static_cast<StreamSession *>(user);
+            self->last_video_sample_us.storeRelaxed(chiaki_time_now_monotonic_us());
+            return chiaki_ffmpeg_decoder_video_sample_cb(buf, size, lost, recovered, self->ffmpeg_decoder);
+        }, this);
 #if CHIAKI_LIB_ENABLE_PI_DECODER
 	}
 #endif
@@ -682,20 +691,30 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	packet_loss_timer->setInterval(200);
 	packet_loss_timer->start();
 	connect(packet_loss_timer, &QTimer::timeout, this, [this]() {
-		if(packet_loss_history.size() > 10)
-			packet_loss_history.takeFirst();
-		packet_loss_history.append(session.stream_connection.congestion_control.packet_loss);
-		double packet_loss = 0;
-		for(auto v : std::as_const(packet_loss_history))
-			packet_loss += v / packet_loss_history.size();
+		uint64_t received, lost;
+		chiaki_packet_stats_get_totals(&session.stream_connection.packet_stats, &received, &lost);
+		if(packet_loss_history.size() >= 10) packet_loss_history.takeFirst();
+		packet_loss_history.append(qMakePair(quint64(received - packet_received_previous), quint64(lost - packet_lost_previous)));
+		packet_received_previous = received;
+		packet_lost_previous = lost;
+		uint64_t window_received = 0, window_lost = 0;
+		for(const auto &sample : std::as_const(packet_loss_history)) {
+			window_received += sample.first;
+			window_lost += sample.second;
+		}
+		const double packet_loss = window_received + window_lost
+			? double(window_lost) / double(window_received + window_lost) : 0.0;
 		if(packet_loss != average_packet_loss)
 		{
 			average_packet_loss = packet_loss;
 			emit AveragePacketLossChanged();
 		}
-		if(session.stream_connection.video_receiver)
+		chiaki_mutex_lock(&session.stream_connection.state_mutex);
+		const int32_t total = session.stream_connection.video_receiver
+			? chiaki_video_receiver_get_frames_lost_total(session.stream_connection.video_receiver) : -1;
+		chiaki_mutex_unlock(&session.stream_connection.state_mutex);
+		if(total >= 0)
 		{
-			int32_t total = chiaki_video_receiver_get_frames_lost_total(session.stream_connection.video_receiver);
 			if(total > pending_frames_lost)
 			{
 				frames_lost += total - pending_frames_lost;
@@ -714,13 +733,14 @@ StreamSession::~StreamSession()
 	stop_requested = true;
 	emit FfmpegDecoderClosing();
 	log.PrepareShutdown();
+	mic_active.storeRelaxed(false);
+	// Stop producers before closing audio devices and freeing decoder resources.
 	if(session_started)
 	{
 		chiaki_session_stop(&session);
 		chiaki_session_join(&session);
 		session_started = false;
 	}
-	mic_active.storeRelaxed(false);
 	StopAudioOutDrainThread();
 	if(audio_out)
 		SDL_CloseAudioDevice(audio_out);
@@ -1215,9 +1235,12 @@ void StreamSession::UpdateGamepads()
 			{
 				haptics_handheld--;
 			}
-			QTimer::singleShot(1000, this, [this, controller] {
-				controller->ChangePlayerIndex(player_index);
-				controller->ChangeLEDColor(led_color);
+			QPointer<Controller> pending_controller(controller);
+			QTimer::singleShot(1000, this, [this, pending_controller] {
+				if (!pending_controller || !pending_controller->IsConnected())
+					return;
+				pending_controller->ChangePlayerIndex(player_index);
+				pending_controller->ChangeLEDColor(led_color);
 			});
 			if (controller->IsDualSense() || controller->IsDualSenseEdge())
 			{
@@ -1939,6 +1962,7 @@ void StreamSession::StopSdeckHaptics()
 
 void StreamSession::PushAudioFrame(int16_t *og_buf, size_t samples_count)
 {
+    last_audio_us.storeRelaxed(chiaki_time_now_monotonic_us());
 	if(!audio_out || !audio_volume)
 		return;
 
@@ -2038,6 +2062,12 @@ void StreamSession::QueueAudioOutData(const QByteArray &audio_data)
 
 void StreamSession::DrainAudioOutRingBuffer()
 {
+    if(audio_out && SDL_GetAudioDeviceStatus(audio_out) == SDL_AUDIO_STOPPED) {
+        if(!audio_output_failed_us.loadRelaxed())
+            audio_output_failed_us.storeRelaxed(chiaki_time_now_monotonic_us());
+        return;
+    }
+    audio_output_failed_us.storeRelaxed(0);
 	const size_t target_queue_size = audio_buffer_size * 2;
 
 	while(audio_out)
@@ -2182,11 +2212,6 @@ void StreamSession::PushHapticsFrame(uint8_t *buf, size_t buf_size)
 {
 	if(!buf || buf_size == 0 || buf_size % 4 != 0)
 		return;
-	if(buf_size == 0)
-	{
-		CHIAKI_LOGW(log.GetChiakiLog(), "Received empty haptics frame");
-		return;
-	}
 
 	if((buf_size % (2 * sizeof(int16_t))) != 0)
 	{
@@ -2804,7 +2829,8 @@ ChiakiErrorCode StreamSession::ConnectPsnConnection(QString duid, bool ps5)
 
 void StreamSession::CancelPsnConnection(bool stop_thread)
 {
-	chiaki_holepunch_main_thread_cancel(holepunch_session, stop_thread);
+	if (holepunch_session)
+		chiaki_holepunch_main_thread_cancel(holepunch_session, stop_thread);
 }
 
 void StreamSession::TriggerFfmpegFrameAvailable()
@@ -2917,4 +2943,18 @@ static void FfmpegFrameCb(ChiakiFfmpegDecoder *decoder, void *user)
 {
 	auto session = reinterpret_cast<StreamSession *>(user);
 	StreamSessionPrivate::TriggerFfmpegFrameAvailable(session);
+}
+
+
+bool StreamSession::RepairVideo()
+{
+    if(stop_requested || !connected || !ffmpeg_decoder) return false;
+    // Do not block the GUI on a driver that is stuck inside the decoder.
+    if(chiaki_mutex_trylock(&ffmpeg_decoder->mutex) == CHIAKI_ERR_SUCCESS) {
+        avcodec_flush_buffers(ffmpeg_decoder->codec_context);
+        chiaki_mutex_unlock(&ffmpeg_decoder->mutex);
+        decoder_flush_generation.fetchAndAddRelaxed(1);
+    }
+    // Even a busy decoder must not prevent the console receiving the IDR request.
+    return RequestIDR();
 }
