@@ -214,6 +214,9 @@ jobs:
           -B build `
           -G Ninja `
           -DCMAKE_TOOLCHAIN_FILE:STRING="vcpkg/scripts/buildsystems/vcpkg.cmake" `
+          -DVCPKG_MANIFEST_INSTALL=OFF `
+          -DVCPKG_INSTALLED_DIR="${env:VCPKG_INSTALLED_DIR}" `
+          -DVCPKG_TARGET_TRIPLET="${{ env.triplet }}" `
           -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE `
           -DCMAKE_BUILD_TYPE=Release `
           -DCHIAKI_ENABLE_CLI=OFF `
