@@ -35,8 +35,8 @@ jobs:
       VULKAN_SDK: C:\VulkanSDK\
       triplet: x64-windows
       vcpkg_baseline: 42bb0d9e8d4cf33485afb9ee2229150f79f61a1f
-      # Allow older vcpkg ports (e.g. json-c) to configure with CMake 4+.
-      CMAKE_POLICY_VERSION_MINIMUM: "3.5"
+      # Use the pinned CMake from PATH for nested vcpkg port builds too.
+      VCPKG_FORCE_SYSTEM_BINARIES: "1"
       dep_folder: deps
       libplacebo_tag: v7.360.1
       sdl2_compat_tag: 2.32.64
@@ -73,6 +73,20 @@ jobs:
 
       - name: Setup MSVC
         uses: ilammy/msvc-dev-cmd@v1
+
+      - name: Pin compatible CMake and Ninja
+        uses: lukka/get-cmake@latest
+        with:
+          cmakeVersion: "3.31.6"
+          ninjaVersion: "1.12.1"
+
+      - name: Verify build tools
+        run: |
+          cmake --version
+          ninja --version
+          if ((cmake --version | Select-Object -First 1) -ne "cmake version 3.31.6") {
+            throw "Unexpected CMake version; refusing to build legacy ports with CMake 4."
+          }
 
       - name: Setup Qt
         uses: jurplel/install-qt-action@v4
