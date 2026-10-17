@@ -37,6 +37,7 @@ jobs:
       vcpkg_baseline: 42bb0d9e8d4cf33485afb9ee2229150f79f61a1f
       # Use the pinned CMake from PATH for nested vcpkg port builds too.
       VCPKG_FORCE_SYSTEM_BINARIES: "1"
+      VCPKG_KEEP_ENV_VARS: PKG_CONFIG
       dep_folder: deps
       libplacebo_tag: v7.360.1
       sdl2_compat_tag: 2.32.64
@@ -87,6 +88,26 @@ jobs:
           if ((cmake --version | Select-Object -First 1) -ne "cmake version 3.31.6") {
             throw "Unexpected CMake version; refusing to build legacy ports with CMake 4."
           }
+
+      - name: Install native pkg-config
+        run: |
+          choco install pkgconfiglite --yes --no-progress
+          if ($LASTEXITCODE -ne 0) { throw "pkg-config installation failed" }
+          $pkgConfig = (Get-Command pkg-config.exe -ErrorAction Stop).Source
+          & $pkgConfig --version
+          if ($LASTEXITCODE -ne 0) { throw "pkg-config verification failed" }
+          "PKG_CONFIG=$pkgConfig" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+
+      - name: Make build directory
+        run: |
+          mkdir build
+
+      - name: Setup vcpkg
+        uses: lukka/run-vcpkg@v11
+        with:
+          vcpkgGitCommitId: ${{ env.vcpkg_baseline }}
+          runVcpkgInstall: true
+          vcpkgJsonGlob: "vcpkg.json"
 
       - name: Setup Qt
         uses: jurplel/install-qt-action@v4
@@ -162,17 +183,6 @@ jobs:
           foreach ($file in @('bin/shaderc_shared.dll', 'lib/shaderc_shared.lib', 'lib/pkgconfig/shaderc.pc', 'include/shaderc/shaderc.h')) {
             if (!(Test-Path "${{ env.dep_folder }}/$file")) { throw "Missing shaderc output: $file" }
           }
-
-      - name: Make build directory
-        run: |
-          mkdir build
-
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11
-        with:
-          vcpkgGitCommitId: ${{ env.vcpkg_baseline }}
-          runVcpkgInstall: true
-          vcpkgJsonGlob: "vcpkg.json"
 
       - name: Build libplacebo
         run: |
