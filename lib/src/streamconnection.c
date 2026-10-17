@@ -64,6 +64,7 @@ static ChiakiErrorCode stream_connection_send_heartbeat(ChiakiStreamConnection *
 CHIAKI_EXPORT ChiakiErrorCode chiaki_stream_connection_init(ChiakiStreamConnection *stream_connection, ChiakiSession *session, double packet_loss_max)
 {
 	stream_connection->session = session;
+	stream_connection->feedback_sender_active = false;
 	stream_connection->log = session->log;
 	stream_connection->packet_loss_max = packet_loss_max;
 
@@ -339,7 +340,8 @@ disconnect:
 		free(stream_connection->streaminfo_early_buf);
 		stream_connection->streaminfo_early_buf = NULL;
 	}
-	stream_connection_send_disconnect(stream_connection);
+	if(!stream_connection->remote_disconnected)
+		stream_connection_send_disconnect(stream_connection);
 
 	if(stream_connection->should_stop)
 	{

@@ -11,6 +11,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_audio_sender_init(ChiakiAudioSender *audio_
     audio_sender->log = log;
     audio_sender->ps5 = session->connect_info.ps5;
     audio_sender->takion = &(session->stream_connection.takion);
+    audio_sender->stream_connection = &session->stream_connection;
     audio_sender->frame_index = 0;
     audio_sender->buf_size_per_unit = 40;
     audio_sender->buf_stride_per_unit = ((audio_sender->buf_size_per_unit + 0xf) / 0x10) * 0x10;
@@ -129,9 +130,19 @@ static void chiaki_audio_sender_frame(ChiakiAudioSender *audio_sender, uint8_t *
 		return;
 	}
 
-	err = chiaki_takion_send_mic_packet(audio_sender->takion, buf, buf_size, audio_sender->ps5);
-	if(err != CHIAKI_ERR_SUCCESS)
-		CHIAKI_LOGE(audio_sender->log, "Failed to send mic audio packet: %s", chiaki_error_string(err));
+	// Serialize microphone sends with transport shutdown, just like feedback.
+	ChiakiStreamConnection *connection = audio_sender->stream_connection;
+	err = chiaki_mutex_lock(&connection->feedback_sender_mutex);
+	if(err == CHIAKI_ERR_SUCCESS)
+	{
+		if(connection->feedback_sender_active)
+		{
+			err = chiaki_takion_send_mic_packet(audio_sender->takion, buf, buf_size, audio_sender->ps5);
+			if(err != CHIAKI_ERR_SUCCESS)
+				CHIAKI_LOGE(audio_sender->log, "Failed to send mic audio packet: %s", chiaki_error_string(err));
+		}
+		chiaki_mutex_unlock(&connection->feedback_sender_mutex);
+	}
 
 	if(audio_sender->frame_index == UINT16_MAX)
 		audio_sender->frame_index = 0;

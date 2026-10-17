@@ -1,3 +1,5 @@
+#include "sessionresource.h"
+#include <memory>
 #include "qmlbackend.h"
 #include "qmlsettings.h"
 #include "qmlmainwindow.h"
@@ -1104,47 +1106,58 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
         return;
     }
 
-    connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(), [this, use_opengl_renderer]() {
-        ChiakiFfmpegDecoder *decoder = session->GetFfmpegDecoder();
-        if (!decoder) {
-            qCCritical(chiakiGui) << "Session has no FFmpeg decoder";
-            return;
-        }
-        int32_t frames_lost;
-        ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
-        if (!frame.frame)
-            return;
-        logDecoderDeliveryStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frames_lost, frame.recovered);
-        logDecoderFramePtsStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frame.pts, frame.duration);
-        if (frame.recovered)
-            pending_recovered_frame.storeRelaxed(1);
+    StreamSession *session_for_connections = session;
+    auto frame_resource = std::make_shared<SessionResource<ChiakiFfmpegDecoder>>(session->GetFfmpegDecoder());
+    connect(session, &StreamSession::FfmpegDecoderClosing, this, [frame_resource]() {
+        frame_resource->Close();
+    }, Qt::DirectConnection);
+    connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(),
+            [this, use_opengl_renderer, frame_resource, session_for_connections]() {
+        frame_resource->Use([&](ChiakiFfmpegDecoder *decoder) {
+            int32_t frames_lost;
+            ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
+            if (!frame.frame)
+                return;
+            logDecoderDeliveryStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frames_lost, frame.recovered);
+            logDecoderFramePtsStats(static_cast<qint64>(chiaki_time_now_monotonic_us()), frame.pts, frame.duration);
+            if (frame.recovered)
+                pending_recovered_frame.storeRelaxed(1);
 
-        const qint64 prepare_begin_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        if (!prepareFrameForPresentation(frame, use_opengl_renderer))
-        {
-            av_frame_free(&frame.frame);
-            return;
-        }
-        const qint64 prepare_end_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        if (prepare_end_us >= prepare_begin_us && prepare_end_us - prepare_begin_us >= 5000) {
-            CHIAKI_NOISY_DEBUG().nospace()
-                << "[decode] prepare_frame_us=" << (prepare_end_us - prepare_begin_us)
-                << " pts=" << frame.pts;
-        }
+            const qint64 prepare_begin_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            if (!prepareFrameForPresentation(frame, use_opengl_renderer))
+            {
+                av_frame_free(&frame.frame);
+                return;
+            }
+            const qint64 prepare_end_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            if (prepare_end_us >= prepare_begin_us && prepare_end_us - prepare_begin_us >= 5000) {
+                CHIAKI_NOISY_DEBUG().nospace()
+                    << "[decode] prepare_frame_us=" << (prepare_end_us - prepare_begin_us)
+                    << " pts=" << frame.pts;
+            }
 
-        if (pending_recovered_frame.fetchAndStoreRelaxed(0) != 0) {
-            frame.recovered = true;
-        }
+            if (pending_recovered_frame.fetchAndStoreRelaxed(0) != 0) {
+                frame.recovered = true;
+            }
 
-        const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
-        QmlMainWindow *target_window = window;
-        QMetaObject::invokeMethod(target_window, [target_window, frame, frames_lost, delivery_us]() mutable {
-            target_window->presentFrame(frame, frames_lost, delivery_us);
+            const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
+            QmlMainWindow *target_window = window;
+            // Own queued frames even if the receiver is destroyed before delivery.
+            auto owned_frame = std::shared_ptr<AVFrame>(frame.frame, [](AVFrame *f) { av_frame_free(&f); });
+            QMetaObject::invokeMethod(this, [this, target_window, frame, owned_frame, frame_resource,
+                                          session_for_connections, frames_lost, delivery_us]() mutable {
+                if (session != session_for_connections || !frame_resource->IsOpen())
+                    return;
+                // presentFrame takes ownership; the queued event keeps its own reference.
+                frame.frame = av_frame_clone(owned_frame.get());
+                if (frame.frame)
+                    target_window->presentFrame(frame, frames_lost, delivery_us);
+            });
         });
     });
 
-    StreamSession *session_for_connections = session;
-    connect(session, &StreamSession::SessionQuit, this, [this, session_for_connections](ChiakiQuitReason reason, const QString &reason_str) {
+    connect(session, &StreamSession::SessionQuit, this, [this, session_for_connections, frame_resource](ChiakiQuitReason reason, const QString &reason_str) {
+        frame_resource->Close();
         if (session != session_for_connections)
             return;
 

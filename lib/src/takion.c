@@ -462,6 +462,21 @@ CHIAKI_EXPORT void chiaki_takion_close(ChiakiTakion *takion)
 {
 	chiaki_stop_pipe_stop(&takion->stop_pipe);
 	chiaki_thread_join(&takion->thread, NULL);
+	if(takion->send_buffer_initialized)
+	{
+		chiaki_takion_send_buffer_fini(&takion->send_buffer);
+		takion->send_buffer_initialized = false;
+	}
+	// The owner stops packet producers before closing the transport.
+	if(takion->close_socket)
+	{
+		if(!CHIAKI_SOCKET_IS_INVALID(takion->sock))
+		{
+			CHIAKI_SOCKET_CLOSE(takion->sock);
+			takion->sock = CHIAKI_INVALID_SOCKET;
+		}
+	}
+
 	chiaki_stop_pipe_fini(&takion->stop_pipe);
 	chiaki_mutex_fini(&takion->seq_num_local_mutex);
 	chiaki_mutex_fini(&takion->gkcrypt_local_mutex);
@@ -1063,6 +1078,7 @@ static void *takion_thread_func(void *user)
 	ChiakiTakion *takion = user;
 	chiaki_thread_set_affinity(CHIAKI_THREAD_NAME_TAKION);
 
+	takion->send_buffer_initialized = false;
 	takion->video_queue_initialized = false;
 	takion->video_queue_head_wait_start_us = 0;
 	takion->video_queue_head_wait_seq_num = 0;
@@ -1079,6 +1095,7 @@ static void *takion_thread_func(void *user)
 	// The send buffer size MUST be consistent with the acked seqnums array size in takion_handle_packet_message_data_ack()
 	if(chiaki_takion_send_buffer_init(&takion->send_buffer, takion, TAKION_SEND_BUFFER_SIZE) != CHIAKI_ERR_SUCCESS)
 		goto error_reoder_queue;
+	takion->send_buffer_initialized = true;
 
 
 	if(takion->cb)
@@ -1162,7 +1179,6 @@ static void *takion_thread_func(void *user)
 		takion_handle_packet(takion, resized_buf, received_size);
 	}
 
-	chiaki_takion_send_buffer_fini(&takion->send_buffer);
 
 	if(takion->video_queue_initialized)
 	{
@@ -1179,14 +1195,6 @@ beach:
 		ChiakiTakionEvent event = { 0 };
 		event.type = CHIAKI_TAKION_EVENT_TYPE_DISCONNECT;
 		takion->cb(&event, takion->cb_user);
-	}
-	if(takion->close_socket)
-	{
-		if(!CHIAKI_SOCKET_IS_INVALID(takion->sock))
-		{
-			CHIAKI_SOCKET_CLOSE(takion->sock);
-			takion->sock = CHIAKI_INVALID_SOCKET;
-		}
 	}
 	return NULL;
 }

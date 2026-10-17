@@ -242,6 +242,8 @@ class StreamSession : public QObject
 		RumbleHapticsIntensity rumble_haptics_intensity;
 		bool start_mic_unmuted;
 		bool session_started;
+		bool stop_requested = false;
+		QTimer retry_timer;
 
 		ChiakiFfmpegDecoder *ffmpeg_decoder;
 		void TriggerFfmpegFrameAvailable();
@@ -378,6 +380,7 @@ class StreamSession : public QObject
 
 	signals:
 		void FfmpegFrameAvailable();
+		void FfmpegDecoderClosing();
 		void RumbleHapticPushed(uint16_t strength);
 #if CHIAKI_GUI_ENABLE_STEAMDECK_NATIVE
 		void SdeckHapticPushed(haptic_packet_t packetl, haptic_packet_t packetr);

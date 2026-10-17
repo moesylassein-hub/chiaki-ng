@@ -158,6 +158,7 @@ typedef struct chiaki_takion_t
 	int64_t video_queue_head_wait_start_us;
 	uint64_t video_queue_head_wait_seq_num;
 	ChiakiTakionSendBuffer send_buffer;
+	bool send_buffer_initialized;
 
 	ChiakiTakionCallback cb;
 	void *cb_user;

@@ -21,6 +21,7 @@ typedef struct chiaki_audio_sender_t
 	ChiakiMutex mutex;
 	bool ps5;
 	ChiakiTakion *takion;
+	ChiakiStreamConnection *stream_connection;
 	uint16_t buf_size_per_unit;
 	uint16_t buf_stride_per_unit;
 	uint8_t *frame_buf;

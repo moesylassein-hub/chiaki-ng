@@ -2,9 +2,26 @@ name: Build chiaki-ng Windows x86_64 (VC)
 
 on:
   workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - "gui/**"
+      - "lib/**"
+      - "test/session-lifecycle/**"
+      - ".github/workflows/build-windows-x86.yml"
 
 jobs:
+  session-lifecycle:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Test queued decoder lifetime under sanitizers
+        run: |
+          g++ -std=c++11 -pthread -fsanitize=address,undefined -g -Igui/include test/session-lifecycle/resource.cpp -o /tmp/session-resource-test
+          /tmp/session-resource-test
+
   build-win_x64:
+    needs: session-lifecycle
     name: Build chiaki-ng win_x64 (VC)
     runs-on: windows-latest
     env:

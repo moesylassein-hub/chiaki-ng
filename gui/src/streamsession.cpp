@@ -36,6 +36,7 @@
 #define PS5_TOUCHPAD_MAX_X 1919.0f
 #define PS5_TOUCHPAD_MAX_Y 1079.0f
 #define SESSION_RETRY_SECONDS 20
+#define SESSION_RETRY_DELAY_MS 1000
 #define HAPTIC_RUMBLE_MIN_STRENGTH 100
 
 #define MICROPHONE_SAMPLES 480
@@ -386,6 +387,17 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	rumble_haptics_connected(false),
 	rumble_haptics_on(false)
 {
+	retry_timer.setSingleShot(true);
+	connect(&retry_timer, &QTimer::timeout, this, [this]() {
+		if (stop_requested)
+			return;
+		try {
+			Start();
+		} catch (const Exception &e) {
+			connect_timer.invalidate();
+			emit SessionQuit(CHIAKI_QUIT_REASON_SESSION_REQUEST_UNKNOWN, QString::fromUtf8(e.what()));
+		}
+	});
 	mic_buf.buf = nullptr;
 	connected = false;
 	muted = true;
@@ -698,6 +710,16 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 
 StreamSession::~StreamSession()
 {
+	retry_timer.stop();
+	stop_requested = true;
+	emit FfmpegDecoderClosing();
+	log.PrepareShutdown();
+	if(session_started)
+	{
+		chiaki_session_stop(&session);
+		chiaki_session_join(&session);
+		session_started = false;
+	}
 	mic_active.storeRelaxed(false);
 	StopAudioOutDrainThread();
 	if(audio_out)
@@ -717,12 +739,6 @@ StreamSession::~StreamSession()
 	StopSdeckHaptics();
 #endif
 
-	// Prepare log for shutdown BEFORE joining session threads
-	// This prevents crashes from log callbacks during shutdown
-	log.PrepareShutdown();
-
-	if(session_started)
-		chiaki_session_join(&session);
 	chiaki_session_fini(&session);
 	chiaki_opus_decoder_fini(&opus_decoder);
 	chiaki_opus_encoder_fini(&opus_encoder);
@@ -800,8 +816,11 @@ StreamSession::~StreamSession()
 
 void StreamSession::Start()
 {
+	if (stop_requested || session_started)
+		return;
 	if(!connect_timer.isValid())
 		connect_timer.start();
+	session.quit_reason = CHIAKI_QUIT_REASON_NONE;
 	ChiakiErrorCode err = chiaki_session_start(&session);
 	if(err != CHIAKI_ERR_SUCCESS)
 	{
@@ -812,8 +831,16 @@ void StreamSession::Start()
 
 void StreamSession::Stop()
 {
+	if (stop_requested)
+		return;
+	stop_requested = true;
+	const bool waiting_for_retry = retry_timer.isActive();
+	retry_timer.stop();
+	connect_timer.invalidate();
 	mic_active.storeRelaxed(false);
 	chiaki_session_stop(&session);
+	if (waiting_for_retry)
+		emit SessionQuit(CHIAKI_QUIT_REASON_STOPPED, QString());
 }
 
 void StreamSession::GoToBed()
@@ -1329,6 +1356,8 @@ void StreamSession::SendFeedbackState()
 
 void StreamSession::InitAudio(unsigned int channels, unsigned int rate)
 {
+	if(stop_requested)
+		return;
 	StopAudioOutDrainThread();
 	allow_unmute = true;
 	if(start_mic_unmuted)
@@ -1395,6 +1424,8 @@ void StreamSession::InitAudio(unsigned int channels, unsigned int rate)
 
 void StreamSession::InitMic(unsigned int channels, unsigned int rate)
 {
+	if(stop_requested)
+		return;
 	auto clear_mic_buffers = [this]() {
 		if(mic_buf.buf)
 		{
@@ -2149,6 +2180,8 @@ void StreamSession::SetMicAuthorization(Authorization authorization)
 
 void StreamSession::PushHapticsFrame(uint8_t *buf, size_t buf_size)
 {
+	if(!buf || buf_size == 0 || buf_size % 4 != 0)
+		return;
 	if(buf_size == 0)
 	{
 		CHIAKI_LOGW(log.GetChiakiLog(), "Received empty haptics frame");
@@ -2281,33 +2314,36 @@ void StreamSession::PushHapticsFrame(uint8_t *buf, size_t buf_size)
 		return;
 	}
 	SDL_AudioCVT cvt = haptics_cvt;
-	cvt.len = buf_size * 2;
-	cvt.buf = haptics_resampler_buf;
+	if(cvt.len_mult <= 0 || buf_size > size_t(INT_MAX) / 2 / size_t(cvt.len_mult))
+		return;
+	cvt.len = int(buf_size * 2);
+	QByteArray converted(cvt.len * cvt.len_mult, 0);
+	cvt.buf = reinterpret_cast<Uint8 *>(converted.data());
 	// Remix to 4 channels
 	if(haptic_override > 0.99 && haptic_override < 1.01)
 	{
 		for (int i=0; i < buf_size; i+=4)
 		{
-			SDL_memset(haptics_resampler_buf + i * 2, 0, 4);
-			SDL_memcpy(haptics_resampler_buf + (i * 2) + 4, buf + i, 4);
+			SDL_memset(cvt.buf + i * 2, 0, 4);
+			SDL_memcpy(cvt.buf + (i * 2) + 4, buf + i, 4);
 		}
 	}
 	else
 	{
 		for (int i=0; i < buf_size; i+=4)
 		{
-			SDL_memset(haptics_resampler_buf + i * 2, 0, 4);
-			SDL_memcpy(haptics_resampler_buf + (i * 2) + 4, buf + i, 4);
-			int16_t amplitudel = (*reinterpret_cast<int16_t *>(haptics_resampler_buf + (i * 2) + 4));
+			SDL_memset(cvt.buf + i * 2, 0, 4);
+			SDL_memcpy(cvt.buf + (i * 2) + 4, buf + i, 4);
+			int16_t amplitudel = (*reinterpret_cast<int16_t *>(cvt.buf + (i * 2) + 4));
 			int32_t adjustedl = static_cast<int32_t>(amplitudel) * haptic_override;
 			adjustedl = (adjustedl > INT16_MAX) ? INT16_MAX : adjustedl;
 			amplitudel = (adjustedl < INT16_MIN) ? INT16_MIN : adjustedl;
-			(*reinterpret_cast<int16_t *>(haptics_resampler_buf + (i * 2) + 4)) = amplitudel;
-			int16_t amplituder = (*reinterpret_cast<int16_t *>(haptics_resampler_buf + (i * 2) + 6));
+			(*reinterpret_cast<int16_t *>(cvt.buf + (i * 2) + 4)) = amplitudel;
+			int16_t amplituder = (*reinterpret_cast<int16_t *>(cvt.buf + (i * 2) + 6));
 			int32_t adjustedr = static_cast<int32_t>(amplituder) * haptic_override;
 			adjustedr = (adjustedr > INT16_MAX) ? INT16_MAX : adjustedr;
 			amplituder = (adjustedr < INT16_MIN) ? INT16_MIN : adjustedr;
-			(*reinterpret_cast<int16_t *>(haptics_resampler_buf + (i * 2) + 6)) = amplituder;
+			(*reinterpret_cast<int16_t *>(cvt.buf + (i * 2) + 6)) = amplituder;
 		}
 	}
 	// Resample to 48kHZ
@@ -2329,20 +2365,42 @@ void StreamSession::Event(ChiakiEvent *event)
 	switch(event->type)
 	{
 		case CHIAKI_EVENT_CONNECTED:
-			connect_timer.invalidate();
-			connected = true;
-			emit ConnectedChanged();
+			QMetaObject::invokeMethod(this, [this]() {
+				if (stop_requested)
+					return;
+				connect_timer.invalidate();
+				connected = true;
+				emit ConnectedChanged();
+			}, Qt::QueuedConnection);
 			break;
-		case CHIAKI_EVENT_QUIT:
-			if(!connected && !holepunch_session && chiaki_quit_reason_is_error(event->quit.reason) && connect_timer.elapsed() < SESSION_RETRY_SECONDS * 1000)
-			{
-				QTimer::singleShot(SESSION_RETRY_SECONDS / 3, this, &StreamSession::Start);
-				return;
-			}
-			connected = false;
-			emit ConnectedChanged();
-			emit SessionQuit(event->quit.reason, event->quit.reason_str ? QString::fromUtf8(event->quit.reason_str) : QString());
+		case CHIAKI_EVENT_QUIT: {
+			const ChiakiQuitReason reason = event->quit.reason;
+			const QString reason_str = event->quit.reason_str ? QString::fromUtf8(event->quit.reason_str) : QString();
+			QMetaObject::invokeMethod(this, [this, reason, reason_str]() {
+				// This runs on the GUI thread, after the worker's quit callback.
+				// Join before reusing the session thread handle on a retry.
+				if (session_started)
+				{
+					chiaki_session_join(&session);
+					session_started = false;
+				}
+				// Only retry a refused connection (e.g. a console still waking).
+				// Authentication and established-stream failures require user action.
+				if (!stop_requested && !connected && !holepunch_session
+					&& reason == CHIAKI_QUIT_REASON_SESSION_REQUEST_CONNECTION_REFUSED
+					&& connect_timer.isValid()
+					&& connect_timer.elapsed() + SESSION_RETRY_DELAY_MS < SESSION_RETRY_SECONDS * 1000)
+				{
+					retry_timer.start(SESSION_RETRY_DELAY_MS);
+					return;
+				}
+				connect_timer.invalidate();
+				connected = false;
+				emit ConnectedChanged();
+				emit SessionQuit(stop_requested ? CHIAKI_QUIT_REASON_STOPPED : reason, reason_str);
+			}, Qt::QueuedConnection);
 			break;
+		}
 		case CHIAKI_EVENT_REGIST:
 			emit AutoRegistSucceeded(event->host);
 			break;
@@ -2777,12 +2835,12 @@ class StreamSessionPrivate
 	public:
 		static void InitAudio(StreamSession *session, uint32_t channels, uint32_t rate)
 		{
-			QMetaObject::invokeMethod(session, "InitAudio", Qt::ConnectionType::BlockingQueuedConnection, Q_ARG(unsigned int, channels), Q_ARG(unsigned int, rate));
+			QMetaObject::invokeMethod(session, "InitAudio", Qt::ConnectionType::QueuedConnection, Q_ARG(unsigned int, channels), Q_ARG(unsigned int, rate));
 		}
 
 		static void InitMic(StreamSession *session, uint32_t channels, uint32_t rate)
 		{
-			QMetaObject::invokeMethod(session, "InitMic", Qt::ConnectionType::BlockingQueuedConnection, Q_ARG(unsigned int, channels), Q_ARG(unsigned int, rate));
+			QMetaObject::invokeMethod(session, "InitMic", Qt::ConnectionType::QueuedConnection, Q_ARG(unsigned int, channels), Q_ARG(unsigned int, rate));
 		}
 
 		static void PushAudioFrame(StreamSession *session, int16_t *buf, size_t samples_count)	{ session->PushAudioFrame(buf, samples_count); }
