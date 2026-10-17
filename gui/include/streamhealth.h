@@ -17,7 +17,7 @@ public:
         if (now - last > 5000) { reset(now); return None; }
         const int64_t elapsed = std::max<int64_t>(0, now - last); last = now;
         if (now - started < 15000) return None;
-        if (recover && videoEnabled && now - std::max(video, started) >= 5000) {
+        if (recover && videoEnabled && now - (std::max)(video, started) >= 5000) {
             if (repair < 0) { repair = now; return RepairVideo; }
             if (now - repair >= 5000) return ReconnectVideo;
             return None;
@@ -33,9 +33,9 @@ public:
         if (good >= 120000 && bitrate < ceiling) { bad = good = 0; return RaiseBitrate; }
         return None;
     }
-    static unsigned floor(unsigned ceiling) { return std::min(ceiling, 8000u); }
-    static unsigned lower(unsigned value, unsigned ceiling) { return std::max(floor(ceiling), value - value / 4); }
-    static unsigned raise(unsigned value, unsigned ceiling) { return std::min(ceiling, value + std::max(1000u, ceiling / 10)); }
+    static unsigned floor(unsigned ceiling) { return (std::min)(ceiling, 8000u); }
+    static unsigned lower(unsigned value, unsigned ceiling) { return (std::max)(floor(ceiling), value - value / 4); }
+    static unsigned raise(unsigned value, unsigned ceiling) { return (std::min)(ceiling, value + (std::max)(1000u, ceiling / 10)); }
 private:
     int64_t started = 0, last = 0, bad = 0, good = 0, repair = -1;
 };

@@ -1,6 +1,13 @@
-#include "streamhealth.h"
+#include <algorithm>
+#include <cstdint>
 #include <cassert>
 #include <iostream>
+// Reproduce Windows headers preceding this header in Qt's combined MOC file.
+#define min(a, b) (((a) < (b)) ? (a) : (b))
+#define max(a, b) (((a) > (b)) ? (a) : (b))
+#include "streamhealth.h"
+#undef min
+#undef max
 using H = StreamHealth;
 int main()
 {
