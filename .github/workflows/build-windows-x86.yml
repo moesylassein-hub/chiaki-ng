@@ -235,25 +235,24 @@ jobs:
           cp build\gui\chiaki.exe chiaki-ng-Win
           cp build\third-party\cpp-steam-tools\cpp-steam-tools.dll chiaki-ng-Win
           cp scripts\qtwebengine_import.qml gui\src\qml\
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\libcrypto-*-x64.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\libssl-*-x64.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\SDL2.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\SDL3.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\hidapi.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\fftw3.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\opus.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\libspeexdsp.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\lcms2.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\miniupnpc.dll" chiaki-ng-Win
-          cp "${env:VCPKG_INSTALLED_DIR}\${{ env.triplet }}\bin\json-c.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\swresample-*.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\avcodec-*.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\avutil-*.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\avformat-*.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\libplacebo-*.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\shaderc_shared.dll" chiaki-ng-Win
-          cp "${{ github.workspace }}\${{ env.dep_folder }}\bin\spirv-cross-c-shared.dll" chiaki-ng-Win
+          # Copy release runtime outputs, including transitive dependencies.
+          # hidapi/fftw are not dependencies in this Windows manifest.
+          $runtimeDirs = @(
+            "build/gui",
+            "$env:VCPKG_INSTALLED_DIR/${{ env.triplet }}/bin",
+            "${{ github.workspace }}/${{ env.dep_folder }}/bin"
+          )
+          foreach ($runtimeDir in $runtimeDirs) {
+            if (!(Test-Path $runtimeDir)) { throw "Runtime directory missing: $runtimeDir" }
+            Get-ChildItem -Path $runtimeDir -Filter "*.dll" -File |
+              Copy-Item -Destination chiaki-ng-Win -Force
+          }
+          # deps is copied last so SDL2-compat and SDL3 remain the packaged pair.
+          foreach ($required in @("chiaki.exe", "cpp-steam-tools.dll", "SDL2.dll", "SDL3.dll", "shaderc_shared.dll")) {
+            if (!(Test-Path "chiaki-ng-Win/$required")) { throw "Missing runtime output: $required" }
+          }
           windeployqt.exe --no-translations --qmldir=gui\src\qml --release chiaki-ng-Win\chiaki.exe
+          if ($LASTEXITCODE -ne 0) { throw "Qt runtime deployment failed" }
 
       - name: Package chiaki-ng
         run: |
