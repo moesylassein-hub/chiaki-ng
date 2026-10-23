@@ -5030,6 +5030,8 @@ vulkan_setup_done:
     }
 
 renderer_backend_ready:
+    qCInfo(chiakiGui) << "Renderer active:"
+                     << (render_backend == RenderBackend::Vulkan ? "Vulkan (dedicated render thread)" : "OpenGL (GUI thread)");
     struct pl_cache_params cache_params = {
         .log = placebo_log,
         .max_total_size = 10 << 20, // 10 MB
