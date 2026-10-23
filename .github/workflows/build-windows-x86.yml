@@ -3,11 +3,12 @@ name: Build chiaki-ng Windows x86_64 (VC)
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, codex/windows-render-sync]
     paths:
       - "gui/**"
       - "lib/**"
       - "test/session-lifecycle/**"
+      - "test/render-sync/**"
       - ".github/workflows/build-windows-x86.yml"
 
 jobs:
@@ -116,6 +117,15 @@ jobs:
           host: 'windows'
           target: 'desktop'
           modules: 'qtwebengine qtpositioning qtwebchannel qtwebsockets qtserialport'
+
+      - name: Test Qt render synchronization
+        run: |
+          cmake -S test/render-sync -B build-render-sync -G Ninja -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { throw "Render sync test configure failed" }
+          cmake --build build-render-sync
+          if ($LASTEXITCODE -ne 0) { throw "Render sync test build failed" }
+          ctest --test-dir build-render-sync --output-on-failure --timeout 15
+          if ($LASTEXITCODE -ne 0) { throw "Render sync regression failed" }
 
       - name: Install pip dependencies
         run: |
