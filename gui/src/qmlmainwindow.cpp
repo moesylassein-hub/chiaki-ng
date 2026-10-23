@@ -1,4 +1,5 @@
 #include "qmlmainwindow.h"
+#include "rendersync.h"
 #include "qmlbackend.h"
 #include "qmlsvgprovider.h"
 #include "exception.h"
@@ -4655,6 +4656,10 @@ AVBufferRef *QmlMainWindow::vulkanHwDeviceCtx()
     }
 
     vulkan_hw_dev_ctx = av_hwdevice_ctx_alloc(AV_HWDEVICE_TYPE_VULKAN);
+    if (!vulkan_hw_dev_ctx) {
+        qCWarning(chiakiGui) << "Failed to allocate Vulkan decode context";
+        return nullptr;
+    }
     AVHWDeviceContext *hwctx = reinterpret_cast<AVHWDeviceContext*>(vulkan_hw_dev_ctx->data);
     hwctx->user_opaque = const_cast<void*>(reinterpret_cast<const void*>(placebo_vulkan));
     AVVulkanDeviceContext *vkctx = reinterpret_cast<AVVulkanDeviceContext*>(hwctx->hwctx);
@@ -4774,6 +4779,9 @@ void QmlMainWindow::init(Settings *settings, bool exit_app_on_stream_exit)
 {
     bypass_frame_queue = settings->GetDirectFrameMapping();
     render_backend = settings->GetRenderBackend();
+    qCInfo(chiakiGui) << "Renderer requested:"
+                     << (render_backend == RenderBackend::Vulkan ? "Vulkan" : "OpenGL")
+                     << "Qt runtime:" << qVersion();
     setSurfaceType(render_backend == RenderBackend::Vulkan ? QWindow::VulkanSurface : QWindow::OpenGLSurface);
     qparams = {};
     qparams.drift_compensation = 1e-3;
@@ -5022,6 +5030,8 @@ vulkan_setup_done:
     }
 
 renderer_backend_ready:
+    qCInfo(chiakiGui) << "Renderer active:"
+                     << (render_backend == RenderBackend::Vulkan ? "Vulkan (dedicated render thread)" : "OpenGL (GUI thread)");
     struct pl_cache_params cache_params = {
         .log = placebo_log,
         .max_total_size = 10 << 20, // 10 MB
@@ -5334,10 +5344,7 @@ void QmlMainWindow::update()
 
     if (quick_need_sync.fetchAndStoreRelaxed(0) != 0) {
         quick_render->polishItems();
-        if (quick_render->thread() == QThread::currentThread())
-            sync();
-        else
-            QMetaObject::invokeMethod(quick_render, std::bind(&QmlMainWindow::sync, this), Qt::QueuedConnection);
+        RunRenderSync(quick_render, [this]() { sync(); });
     }
 
     last_render_dispatch_us.storeRelease(static_cast<qint64>(chiaki_time_now_monotonic_us()));
@@ -6105,10 +6112,7 @@ void QmlMainWindow::updateSwapchain()
     else
         QMetaObject::invokeMethod(quick_render, std::bind(&QmlMainWindow::resizeSwapchain, this), Qt::QueuedConnection);
     quick_render->polishItems();
-    if (quick_render->thread() == QThread::currentThread())
-        sync();
-    else
-        QMetaObject::invokeMethod(quick_render, std::bind(&QmlMainWindow::sync, this), Qt::QueuedConnection);
+    RunRenderSync(quick_render, [this]() { sync(); });
     QMetaObject::invokeMethod(quick_render, std::bind(&QmlMainWindow::render, this), Qt::QueuedConnection);
     const qint64 update_swapchain_end_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
     if (update_swapchain_end_us >= update_swapchain_begin_us && update_swapchain_end_us - update_swapchain_begin_us >= 12000) {
