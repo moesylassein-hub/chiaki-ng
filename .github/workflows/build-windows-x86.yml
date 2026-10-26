@@ -3,11 +3,12 @@ name: Build chiaki-ng Windows x86_64 (VC)
 on:
   workflow_dispatch:
   push:
-    branches: [main]
+    branches: [main, codex/windows-render-sync]
     paths:
       - "gui/**"
       - "lib/**"
       - "test/session-lifecycle/**"
+      - "test/render-sync/**"
       - ".github/workflows/build-windows-x86.yml"
 
 jobs:
@@ -117,6 +118,15 @@ jobs:
           target: 'desktop'
           modules: 'qtwebengine qtpositioning qtwebchannel qtwebsockets qtserialport'
 
+      - name: Test Qt render synchronization
+        run: |
+          cmake -S test/render-sync -B build-render-sync -G Ninja -DCMAKE_BUILD_TYPE=Release
+          if ($LASTEXITCODE -ne 0) { throw "Render sync test configure failed" }
+          cmake --build build-render-sync
+          if ($LASTEXITCODE -ne 0) { throw "Render sync test build failed" }
+          ctest --test-dir build-render-sync --output-on-failure --timeout 15
+          if ($LASTEXITCODE -ne 0) { throw "Render sync regression failed" }
+
       - name: Install pip dependencies
         run: |
           ${{ env.pythonLocation }}\python.exe -m pip install --upgrade pip
@@ -218,7 +228,7 @@ jobs:
           -DVCPKG_INSTALLED_DIR="${env:VCPKG_INSTALLED_DIR}" `
           -DVCPKG_TARGET_TRIPLET="${{ env.triplet }}" `
           -DCMAKE_EXPORT_COMPILE_COMMANDS:BOOL=TRUE `
-          -DCMAKE_BUILD_TYPE=Release `
+          -DCMAKE_BUILD_TYPE=RelWithDebInfo `
           -DCHIAKI_ENABLE_CLI=OFF `
           -DCHIAKI_GUI_ENABLE_SDL_GAMECONTROLLER=ON `
           -DCHIAKI_ENABLE_STEAMDECK_NATIVE=OFF `
@@ -227,12 +237,14 @@ jobs:
 
       - name: Build chiaki-ng
         run: |
-          cmake --build build --config Release --clean-first --target chiaki
+          cmake --build build --config RelWithDebInfo --clean-first --target chiaki
 
       - name: Prepare Qt deployment package
         run: |
           mkdir chiaki-ng-Win
           cp build\gui\chiaki.exe chiaki-ng-Win
+          cp scripts\windows-vc\diagnose.ps1 chiaki-ng-Win
+          @("Commit: ${{ github.sha }}", "Run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}", "Configuration: RelWithDebInfo", "Qt: $(qmake -query QT_VERSION)") | Set-Content chiaki-ng-Win\build-info.txt
           cp build\third-party\cpp-steam-tools\cpp-steam-tools.dll chiaki-ng-Win
           cp scripts\qtwebengine_import.qml gui\src\qml\
           # Copy release runtime outputs, including transitive dependencies.
@@ -271,6 +283,14 @@ jobs:
           path: ${{ env.RELEASE_PACKAGE_PATH }}
           if-no-files-found: error
           retention-days: 7
+
+      - name: Upload matching debug symbols
+        uses: actions/upload-artifact@v4
+        with:
+          name: chiaki-ng-win_x64-VC-symbols
+          path: build/gui/*.pdb
+          if-no-files-found: error
+          retention-days: 30
 
       - name: Compile .ISS to .EXE Installer
         uses: Minionguyjpro/Inno-Setup-Action@v1.2.7

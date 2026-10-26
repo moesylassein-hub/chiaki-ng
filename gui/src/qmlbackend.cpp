@@ -1251,6 +1251,8 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
             QString m = tr("Chiaki Session has quit") + ":\n" + chiaki_quit_reason_string(reason);
             if (!reason_str.isEmpty())
                 m += "\n" + tr("Reason") + ": \"" + reason_str + "\"";
+            if (reason == CHIAKI_QUIT_REASON_CTRL_LOGIN_INCOMPLETE)
+                m += "\n\n" + tr("Check the active user on the console. If a controller is connected directly to the PS5, turn it off and retry. The experimental direct-controller mode does not change console login or account rules.");
             emit sessionError(tr("Session has quit"), m);
         }
 
