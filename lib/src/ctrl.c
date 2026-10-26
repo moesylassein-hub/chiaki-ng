@@ -1020,7 +1020,10 @@ static void ctrl_message_received_login(ChiakiCtrl *ctrl, uint8_t *payload, size
 			return;
 	}
 
-	CtrlLoginState state = payload[0];
+	uint8_t state = payload[0];
+	chiaki_mutex_lock(&ctrl->session->state_mutex);
+	ctrl->session->ctrl_login_state = state;
+	chiaki_mutex_unlock(&ctrl->session->state_mutex);
 	switch(state)
 	{
 		case CTRL_LOGIN_STATE_SUCCESS:

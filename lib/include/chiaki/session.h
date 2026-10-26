@@ -108,6 +108,7 @@ typedef enum {
 	CHIAKI_QUIT_REASON_STREAM_CONNECTION_REMOTE_DISCONNECTED,
 	CHIAKI_QUIT_REASON_STREAM_CONNECTION_REMOTE_SHUTDOWN, // like REMOTE_DISCONNECTED, but because the server shut down
 	CHIAKI_QUIT_REASON_PSN_REGIST_FAILED,
+	CHIAKI_QUIT_REASON_CTRL_LOGIN_INCOMPLETE,
 } ChiakiQuitReason;
 
 CHIAKI_EXPORT const char *chiaki_quit_reason_string(ChiakiQuitReason reason);
@@ -264,6 +265,7 @@ typedef struct chiaki_session_t
 	bool ctrl_failed;
 	bool ctrl_session_id_received;
 	bool ctrl_login_pin_requested;
+	int ctrl_login_state; // -1 until a valid login-state message arrives; state_mutex protected.
 	bool ctrl_first_heartbeat_received;
 	bool login_pin_entered;
 	bool psn_regist_succeeded;

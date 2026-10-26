@@ -165,6 +165,8 @@ CHIAKI_EXPORT const char *chiaki_quit_reason_string(ChiakiQuitReason reason)
 			return "Remote has disconnected from Stream Connection the because Server shut down";
 		case CHIAKI_QUIT_REASON_PSN_REGIST_FAILED:
 			return "The Console Registration using PSN has failed";
+		case CHIAKI_QUIT_REASON_CTRL_LOGIN_INCOMPLETE:
+			return "The console did not complete Remote Play login";
 		case CHIAKI_QUIT_REASON_NONE:
 		default:
 			return "Unknown";
@@ -200,6 +202,7 @@ CHIAKI_EXPORT ChiakiErrorCode chiaki_session_init(ChiakiSession *session, Chiaki
 	session->should_stop = false;
 	session->ctrl_session_id_received = false;
 	session->ctrl_login_pin_requested = false;
+	session->ctrl_login_state = -1;
 	session->login_pin_entered = false;
 	session->psn_regist_succeeded = false;
 	session->stream_connection_switch_received = false;
@@ -404,6 +407,14 @@ static bool session_check_state_pred_ctrl_start(void *user)
 		   || session->ctrl_login_pin_requested;
 }
 
+// Called with state_mutex held, after the normal startup/PIN wait. Unknown
+// login states are not success. Do not manufacture a session ID for them.
+// A later success or a real session ID still permits connection normally.
+static bool session_ctrl_login_incomplete(ChiakiSession *session)
+{
+	return !session->ctrl_session_id_received && session->ctrl_login_state > 1;
+}
+
 static bool session_check_state_pred_pin(void *user)
 {
 	ChiakiSession *session = user;
@@ -569,6 +580,15 @@ static void *session_thread_func(void *arg)
 	}
 
 	chiaki_socket_t *data_sock = NULL;
+	if(session_ctrl_login_incomplete(session))
+	{
+		char detail[96];
+		snprintf(detail, sizeof(detail), "Console login status 0x%02x; no session ID received", session->ctrl_login_state);
+		CHIAKI_LOGE(session->log, "%s", detail);
+		session->quit_reason = CHIAKI_QUIT_REASON_CTRL_LOGIN_INCOMPLETE;
+		session->quit_reason_str = strdup(detail);
+		QUIT(quit_ctrl);
+	}
 	if(session->rudp)
 	{
 		ChiakiErrorCode err = holepunch_session_create_offer(session->holepunch_session);
