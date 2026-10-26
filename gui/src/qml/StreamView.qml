@@ -231,6 +231,8 @@ Item {
 
             Label {
                 id: errorTextLabel
+                width: Math.min(parent.width - 48, 800)
+                wrapMode: Text.WordWrap
                 anchors {
                     top: errorTitleLabel.bottom
                     horizontalCenter: errorTitleLabel.horizontalCenter
@@ -239,6 +241,15 @@ Item {
                 horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: 20
                 visible: text
+            }
+
+            Button {
+                anchors.top: errorTextLabel.bottom
+                anchors.topMargin: 16
+                anchors.horizontalCenter: parent.horizontalCenter
+                visible: sessionError && !Chiaki.session
+                text: qsTr("Back to consoles")
+                onClicked: root.showMainView()
             }
         }
     }
@@ -1247,20 +1258,12 @@ Item {
         }
     }
 
-    Timer {
-        id: closeTimer
-        interval: 2000
-        onTriggered: root.showMainView()
-    }
-
     Connections {
         target: Chiaki
 
         function onSessionChanged() {
             if (!Chiaki.session) {
-                if (errorTitleLabel.text)
-                    closeTimer.start();
-                else
+                if (!errorTitleLabel.text)
                     root.showMainView();
             } else {
                 sessionError = false;
@@ -1275,7 +1278,6 @@ Item {
             sessionLoading = false;
             errorTitleLabel.text = title;
             errorTextLabel.text = text;
-            closeTimer.start();
         }
 
         function onSessionPinDialogRequested() {

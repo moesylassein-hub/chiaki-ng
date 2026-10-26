@@ -112,11 +112,22 @@ Rectangle {
 
         Label {
             id: errorTextLabel
+            width: Math.min(parent.width - 48, 800)
+            wrapMode: Text.WordWrap
             anchors {
                 top: errorTitleLabel.bottom
                 horizontalCenter: errorTitleLabel.horizontalCenter
                 topMargin: 10
             }
+        }
+
+        Button {
+            anchors.top: errorTextLabel.bottom
+            anchors.topMargin: 16
+            anchors.horizontalCenter: parent.horizontalCenter
+            visible: errorTitleLabel.text.length > 0 && !Chiaki.session
+            text: qsTr("Back to consoles")
+            onClicked: root.showMainView()
         }
     }
 
@@ -223,7 +234,7 @@ Rectangle {
         {
             if (!Chiaki.session) {
                 if (errorTitleLabel.text)
-                    failTimer.start();
+                    failTimer.stop();
                 else if(!failTimer.running)
                     root.showMainView();
             }
@@ -231,6 +242,7 @@ Rectangle {
 
         function onSessionError(title, text)
         {
+            failTimer.stop();
             errorTitleLabel.text = title;
             errorTextLabel.text = text;
             closeTimer.start();
