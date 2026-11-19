@@ -1949,6 +1949,7 @@ void QmlSettings::refreshAllKeys()
     emit psnAuthTokenExpiryChanged();
     emit psnAccountIdChanged();
     emit mouseTouchEnabledChanged();
+    emit rememberGamesChanged();
     emit consoleTextEntryChanged();
     emit keyboardEnabledChanged();
     emit dpadTouchEnabledChanged();

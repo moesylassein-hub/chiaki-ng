@@ -604,6 +604,18 @@ DialogView {
                         }
                         Label {
                             Layout.alignment: Qt.AlignRight
+                            text: qsTr("Recent games")
+                        }
+                        C.CheckBox {
+                            Layout.columnSpan: 2
+                            text: qsTr("Remember the last four titles discovered on each registered console")
+                            checked: Chiaki.settings.rememberGames
+                            onToggled: Chiaki.settings.rememberGames = checked
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Turning this off clears the history for this profile.")
+                        }
+                        Label {
+                            Layout.alignment: Qt.AlignRight
                             text: qsTr("Streamer Mode (Hides Info)")
                         }
                         C.CheckBox {

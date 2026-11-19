@@ -721,6 +721,10 @@ class Settings : public QObject
 		QList<RegisteredHost> GetRegisteredHosts() const			{ return registered_hosts.values(); }
 		void AddRegisteredHost(const RegisteredHost &host);
 		void RemoveRegisteredHost(const HostMAC &mac);
+		bool GetRememberGames() const { return settings.value("settings/remember_games", false).toBool(); }
+		void SetRememberGames(bool enabled);
+		QStringList RecentGames(const HostMAC &mac) const;
+		void NoteRunningGame(const HostMAC &mac, const QString &title);
 		bool GetRegisteredHostRegistered(const HostMAC &mac) const	{ return registered_hosts.contains(mac); }
 		RegisteredHost GetRegisteredHost(const HostMAC &mac) const	{ return registered_hosts[mac]; }
 		QList<HiddenHost> GetHiddenHosts() const 					{ return hidden_hosts.values(); }

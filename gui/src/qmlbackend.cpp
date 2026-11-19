@@ -335,6 +335,15 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     psn_connection_thread.start();
 
     setConnectState(PsnConnectState::NotStarted);
+    connect(settings_qml, &QmlSettings::rememberGamesChanged, this, &QmlBackend::hostsChanged);
+    connect(settings_qml, &QmlSettings::psnAuthTokenChanged, this, [this] {
+        if (settings->GetPsnAuthToken().isEmpty()) {
+            psn_hosts.clear();
+            psn_nickname_hosts.clear();
+            emit hostsChanged();
+        }
+    });
+    connect(settings_qml, &QmlSettings::streamerModeChanged, this, &QmlBackend::hostsChanged);
     connect(settings_qml, &QmlSettings::audioVolumeChanged, this, &QmlBackend::updateAudioVolume);
     connect(settings_qml, &QmlSettings::placeboChanged, window, &QmlMainWindow::updatePlacebo);
         connect(settings_qml,
@@ -771,6 +780,7 @@ void QmlBackend::setConnectState(PsnConnectState connect_state)
 QVariantList QmlBackend::hosts() const
 {
     QVariantList out;
+    const bool showHistory = settings->GetRememberGames() && !settings->GetStreamerMode();
     QList<ManualHost> discovered_manual_hosts;
     auto manual_hosts = settings->GetManualHosts();
     for (const auto &host : discovery_manager.GetHosts()) {
@@ -820,6 +830,8 @@ QVariantList QmlBackend::hosts() const
         m["ps5"] = host.ps5;
         m["mac"] = host_mac.ToString();
         m["state"] = chiaki_discovery_host_state_string(host.state);
+        if (registered && showHistory)
+            m["recentGames"] = settings->RecentGames(host_mac);
         m["app"] = host.running_app_name;
         m["titleId"] = host.running_app_titleid;
         m["registered"] = registered;
@@ -844,6 +856,8 @@ QVariantList QmlBackend::hosts() const
             m["name"] = registered.GetServerNickname();
             m["ps5"] = chiaki_target_is_ps5(registered.GetTarget());
             m["mac"] = registered.GetServerMAC().ToString();
+            if (showHistory)
+                m["recentGames"] = settings->RecentGames(registered.GetServerMAC());
         }
         out.append(m);
     }
@@ -855,6 +869,8 @@ QVariantList QmlBackend::hosts() const
         m["manual"] = false;
         m["display"] = !waking_sleeping_nicknames.contains(host.GetName());
         m["routeId"] = QStringLiteral("psn/") + host.GetDuid();
+        if (showHistory && host.IsPS5() && settings->GetNicknameRegisteredHostRegistered(host.GetName()))
+            m["recentGames"] = settings->RecentGames(settings->GetNicknameRegisteredHost(host.GetName()).GetServerMAC());
         m["name"] = host.GetName();
         m["duid"] = host.GetDuid();
         m["address"] = "";
@@ -2418,6 +2434,10 @@ void QmlBackend::controllerMappingApply()
 
 void QmlBackend::updateDiscoveryHosts()
 {
+    if (settings->GetRememberGames() && !settings->GetStreamerMode()) {
+        for (const auto &host : discovery_manager.GetHosts())
+            settings->NoteRunningGame(host.GetHostMAC(), host.running_app_name);
+    }
     // Wakeup console that we are currently connecting to
     for (const auto &host : discovery_manager.GetHosts()) {
         if (host.host_addr != session_info.host)

@@ -2226,10 +2226,35 @@ void Settings::AddRegisteredHost(const RegisteredHost &host)
 	emit RegisteredHostsUpdated();
 }
 
+void Settings::SetRememberGames(bool enabled)
+{
+	settings.setValue("settings/remember_games", enabled);
+	if (!enabled)
+		settings.remove("recent_games");
+}
+
+QStringList Settings::RecentGames(const HostMAC &mac) const
+{
+	return settings.value("recent_games/" + mac.ToString()).toStringList();
+}
+
+void Settings::NoteRunningGame(const HostMAC &mac, const QString &title)
+{
+	if (title.isEmpty() || !GetRegisteredHostRegistered(mac))
+		return;
+	auto games = RecentGames(mac);
+	if (!games.isEmpty() && games.first() == title)
+		return;
+	games.removeAll(title);
+	games.prepend(title);
+	settings.setValue("recent_games/" + mac.ToString(), games.mid(0, 4));
+}
+
 void Settings::RemoveRegisteredHost(const HostMAC &mac)
 {
 	if(!registered_hosts.contains(mac))
 		return;
+	settings.remove("recent_games/" + mac.ToString());
 	registered_hosts.remove(mac);
 	SaveRegisteredHosts();
 	emit RegisteredHostsUpdated();

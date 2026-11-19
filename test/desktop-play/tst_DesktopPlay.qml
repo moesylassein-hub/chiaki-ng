@@ -19,6 +19,9 @@ TestCase {
     }
     Window {
         id: streamWindow
+        visible: true
+        width: 480
+        height: 240
         property int grabs: 0
         function grabInput() { ++grabs }
         function releaseInput() { --grabs }

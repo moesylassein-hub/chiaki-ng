@@ -163,6 +163,14 @@ Pane {
             }
 
             Button {
+                text: Chiaki.settings.currentProfile || qsTr("Profiles")
+                Accessible.name: qsTr("Switch profile")
+                Layout.maximumWidth: 170
+                flat: true
+                onClicked: root.showProfileDialog()
+            }
+
+            Button {
                 text: qsTr("Add Console")
                 focusPolicy: Qt.NoFocus
                 onClicked: root.showManualHostDialog()
@@ -222,7 +230,7 @@ Pane {
             top: connectionBar.bottom
             left: parent.left
             right: parent.right
-            bottom: footer.top
+            bottom: recentGames.visible ? recentGames.top : footer.top
             margins: 24
             topMargin: 20
             bottomMargin: 16
@@ -434,6 +442,29 @@ Pane {
             Layout.alignment: Qt.AlignHCenter
             text: qsTr("Add by address")
             onClicked: root.showManualHostDialog()
+        }
+    }
+
+    ColumnLayout {
+        id: recentGames
+        readonly property var selectedHost: consolePane.routes[hostsView.currentIndex]
+        readonly property var titles: selectedHost && selectedHost.recentGames ? selectedHost.recentGames : []
+        visible: titles.length > 0 && !Chiaki.settings.streamerMode
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.bottom: footer.top
+        anchors.margins: 20
+        spacing: 4
+        Label {
+            text: qsTr("Recent games on %1").arg(recentGames.selectedHost ? recentGames.selectedHost.name : "")
+            font.weight: Font.DemiBold
+        }
+        Label {
+            Layout.fillWidth: true
+            text: recentGames.titles.join("  ·  ")
+            textFormat: Text.PlainText
+            elide: Text.ElideRight
+            color: consolePane.secondaryTextColor
         }
     }
 
