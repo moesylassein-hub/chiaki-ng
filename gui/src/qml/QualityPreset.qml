@@ -1,12 +1,11 @@
 import QtQuick
 import QtQuick.Controls
 import "controls" as C
-import org.streetpea.chiaking
 
 C.ComboBox {
     id: presets
     required property string scope
-    property var config: Chiaki.settings
+    required property var config
     Accessible.name: qsTr("Stream quality preset")
     textRole: "label"
     model: [

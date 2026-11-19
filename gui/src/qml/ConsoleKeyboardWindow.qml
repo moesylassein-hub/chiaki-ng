@@ -63,6 +63,7 @@ Window {
         anchors.margins: 16
         TextField {
             id: field
+            objectName: "consoleTextField"
             property bool edited: false
             onTextEdited: edited = true
             Layout.fillWidth: true

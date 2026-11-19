@@ -1171,6 +1171,7 @@ DialogView {
                     }
                     QualityPreset {
                         id: localPreset
+                        config: Chiaki.settings
                         scope: selectedConsole === SettingsDialog.Console.PS4 ? "LocalPS4" : "LocalPS5"
                         Layout.fillWidth: true
                         KeyNavigation.up: consoleSelection
@@ -1179,6 +1180,7 @@ DialogView {
                     }
                     QualityPreset {
                         id: remotePreset
+                        config: Chiaki.settings
                         scope: selectedConsole === SettingsDialog.Console.PS4 ? "RemotePS4" : "RemotePS5"
                         Layout.fillWidth: true
                         KeyNavigation.up: consoleSelection
