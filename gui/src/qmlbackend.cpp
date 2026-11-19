@@ -337,7 +337,7 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     setConnectState(PsnConnectState::NotStarted);
     connect(settings_qml, &QmlSettings::rememberGamesChanged, this, &QmlBackend::hostsChanged);
     connect(settings_qml, &QmlSettings::psnAuthTokenChanged, this, [this] {
-        if (settings->GetPsnAuthToken().isEmpty()) {
+        if (this->settings->GetPsnAuthToken().isEmpty()) {
             psn_hosts.clear();
             psn_nickname_hosts.clear();
             emit hostsChanged();
@@ -2710,19 +2710,22 @@ void QmlBackend::updatePsnHosts()
             updatePsnHosts();
             return;
         }
-        if (result.refreshed)
+        if (result.refreshed) {
             psn_nickname_hosts.clear();
-        for (const auto &host : result.devices)
-            psn_nickname_hosts.insert(host.GetName(), host);
+            psn_hosts.clear();
+            for (const auto &host : result.devices) {
+                if (!psn_nickname_hosts.contains(host.GetName()))
+                    psn_nickname_hosts.insert(host.GetName(), host);
+                if (settings->GetNicknameRegisteredHostRegistered(host.GetName()))
+                    psn_hosts.insert(host.GetDuid(), host);
+            }
+        }
         const PsnHost ps4(QString::fromLatin1(QByteArray(32, 'A').toHex()), QStringLiteral("Main PS4 Console"), false);
         psn_nickname_hosts.insert(ps4.GetName(), ps4);
-        psn_hosts.clear();
-        for (const auto &host : std::as_const(psn_nickname_hosts)) {
-            const bool registered = host.IsPS5() ? settings->GetNicknameRegisteredHostRegistered(host.GetName())
-                                                 : settings->GetPS4RegisteredHostsRegistered() > 0;
-            if (registered)
-                psn_hosts.insert(host.GetDuid(), host);
-        }
+        if (settings->GetPS4RegisteredHostsRegistered() > 0)
+            psn_hosts.insert(ps4.GetDuid(), ps4);
+        else
+            psn_hosts.remove(ps4.GetDuid());
         emit hostsChanged();
     });
     watcher->setFuture(QtConcurrent::run(&QmlBackend::fetchPsnDevices, token, settings->GetLogLevelMask()));
