@@ -286,7 +286,11 @@ private:
     void updateControllerMappings();
     void updateDiscoveryHosts();
     void updatePsnHosts();
-    void updatePsnHostsThread();
+    struct PsnDeviceList {
+        bool refreshed = false;
+        QList<PsnHost> devices;
+    };
+    static PsnDeviceList fetchPsnDevices(QString token, uint32_t logMask);
     void updateAudioVolume();
     void resumeFromSleep();
     uint32_t getStreamShortcut() const;
@@ -341,8 +345,6 @@ private:
     bool controller_mapping_default_mapping = false;
     bool controller_mapping_altered = false;
     bool updating_psn_hosts = false;
-    QFutureWatcher<void> psn_hosts_watcher;
-    QFuture<void> psn_hosts_future;
     bool disable_zero_copy = false;
     QMutex hw_transfer_state_mutex;
     QSet<int> logged_hw_transfer_formats;

@@ -84,6 +84,7 @@ class QmlSettings : public QObject
     Q_PROPERTY(QString psnAuthTokenExpiry READ psnAuthTokenExpiry WRITE setPsnAuthTokenExpiry NOTIFY psnAuthTokenExpiryChanged)
     Q_PROPERTY(QString psnAccountId READ psnAccountId WRITE setPsnAccountId NOTIFY psnAccountIdChanged)
     Q_PROPERTY(bool mouseTouchEnabled READ mouseTouchEnabled WRITE setMouseTouchEnabled NOTIFY mouseTouchEnabledChanged)
+    Q_PROPERTY(bool consoleTextEntry READ consoleTextEntry WRITE setConsoleTextEntry NOTIFY consoleTextEntryChanged)
     Q_PROPERTY(bool keyboardEnabled READ keyboardEnabled WRITE setKeyboardEnabled NOTIFY keyboardEnabledChanged)
     Q_PROPERTY(bool dpadTouchEnabled READ dpadTouchEnabled WRITE setDpadTouchEnabled NOTIFY dpadTouchEnabledChanged)
     Q_PROPERTY(bool iDROnFECFailureEnabled READ iDROnFECFailureEnabled WRITE setIDROnFECFailureEnabled NOTIFY iDROnFECFailureEnabledChanged)
@@ -556,6 +557,8 @@ public:
     bool mouseTouchEnabled() const;
     void setMouseTouchEnabled(bool enabled);
 
+    bool consoleTextEntry() const { return settings->GetConsoleTextEntry(); }
+    void setConsoleTextEntry(bool enabled) { settings->SetConsoleTextEntry(enabled); emit consoleTextEntryChanged(); }
     bool keyboardEnabled() const;
     void setKeyboardEnabled(bool enabled);
 
@@ -693,6 +696,7 @@ signals:
     void psnAuthTokenExpiryChanged();
     void psnAccountIdChanged();
     void mouseTouchEnabledChanged();
+    void consoleTextEntryChanged();
     void keyboardEnabledChanged();
     void dpadTouchEnabledChanged();
     void dpadTouchIncrementChanged();

@@ -566,6 +566,17 @@ DialogView {
 
                         Label {
                             Layout.alignment: Qt.AlignRight
+                            text: qsTr("Console text entry")
+                        }
+                        C.CheckBox {
+                            Layout.columnSpan: 2
+                            text: qsTr("Type with this keyboard when the console opens a text field")
+                            checked: Chiaki.settings.consoleTextEntry
+                            onToggled: Chiaki.settings.consoleTextEntry = checked
+                        }
+
+                        Label {
+                            Layout.alignment: Qt.AlignRight
                             text: qsTr("Log Directory:")
                         }
 
@@ -1115,13 +1126,7 @@ DialogView {
                             else
                                 KeyNavigation.AfterItem
                         }
-                        KeyNavigation.down: {
-                            if(selectedConsole == SettingsDialog.Console.PS4)
-                                resolutionLocalPS4
-                            else
-                                resolutionLocalPS5
-
-                        }
+                        KeyNavigation.down: localPreset
 
                     }
 
@@ -1162,6 +1167,27 @@ DialogView {
 
                     Label {
                         Layout.alignment: Qt.AlignRight
+                        text: qsTr("Quick preset")
+                    }
+                    QualityPreset {
+                        id: localPreset
+                        scope: selectedConsole === SettingsDialog.Console.PS4 ? "LocalPS4" : "LocalPS5"
+                        Layout.fillWidth: true
+                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.right: remotePreset
+                        KeyNavigation.down: selectedConsole === SettingsDialog.Console.PS4 ? resolutionLocalPS4 : resolutionLocalPS5
+                    }
+                    QualityPreset {
+                        id: remotePreset
+                        scope: selectedConsole === SettingsDialog.Console.PS4 ? "RemotePS4" : "RemotePS5"
+                        Layout.fillWidth: true
+                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.left: localPreset
+                        KeyNavigation.down: selectedConsole === SettingsDialog.Console.PS4 ? resolutionRemotePS4 : resolutionRemotePS5
+                    }
+
+                    Label {
+                        Layout.alignment: Qt.AlignRight
                         text: qsTr("Resolution:")
                     }
 
@@ -1177,7 +1203,7 @@ DialogView {
                         visible: selectedConsole == SettingsDialog.Console.PS4
                         KeyNavigation.right: resolutionRemotePS4
                         KeyNavigation.down: fpsLocalPS4
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: localPreset
                         KeyNavigation.priority: {
                             if(!popup.visible)
                                 KeyNavigation.BeforeItem
@@ -1198,7 +1224,7 @@ DialogView {
                         visible: selectedConsole == SettingsDialog.Console.PS4
                         KeyNavigation.left: resolutionLocalPS4
                         KeyNavigation.down: fpsRemotePS4
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: remotePreset
                         KeyNavigation.priority: {
                             if(!popup.visible)
                                 KeyNavigation.BeforeItem
@@ -1218,7 +1244,7 @@ DialogView {
                         }
                         visible: selectedConsole == SettingsDialog.Console.PS5
                         KeyNavigation.right: resolutionRemotePS5
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: localPreset
                         KeyNavigation.down: fpsLocalPS5
                         KeyNavigation.priority: {
                             if(!popup.visible)
@@ -1239,7 +1265,7 @@ DialogView {
                         }
                         visible: selectedConsole == SettingsDialog.Console.PS5
                         KeyNavigation.left: resolutionLocalPS5
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: remotePreset
                         KeyNavigation.down: fpsRemotePS5
                         KeyNavigation.priority: {
                             if(!popup.visible)

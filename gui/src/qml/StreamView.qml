@@ -30,6 +30,11 @@ Item {
     property bool sessionStopDialogActive: false
     property bool sessionPinDialogActive: false
 
+    ConsoleKeyboardWindow {
+        session: Chiaki.session
+        streamWindow: Chiaki.window
+    }
+
     function grabInput(item) {
         Chiaki.window.grabInput();
         restoreFocusItems.push(hostWindow ? hostWindow.activeFocusItem : null);

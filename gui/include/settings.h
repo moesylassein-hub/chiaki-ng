@@ -447,6 +447,8 @@ class Settings : public QObject
 		QString GetCurrentProfile() const;
 		void SetCurrentProfile(QString profile);
 
+		bool GetConsoleTextEntry() const;
+		void SetConsoleTextEntry(bool enabled);
 		bool GetKeyboardEnabled() const;
 		void SetKeyboardEnabled(bool enabled);
 

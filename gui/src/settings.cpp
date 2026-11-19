@@ -995,6 +995,16 @@ void Settings::SetCurrentProfile(QString profile)
 	emit CurrentProfileChanged();
 }
 
+bool Settings::GetConsoleTextEntry() const
+{
+	return settings.value("settings/console_text_entry", false).toBool();
+}
+
+void Settings::SetConsoleTextEntry(bool enabled)
+{
+	settings.setValue("settings/console_text_entry", enabled);
+}
+
 bool Settings::GetKeyboardEnabled() const
 {
 	return settings.value("settings/keyboard_enabled", true).toBool();

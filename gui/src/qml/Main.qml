@@ -46,6 +46,7 @@ Item {
         }
     }
     property list<Item> restoreFocusItems
+    property bool remoteHome: false
     property bool initialAsk: false
     readonly property bool preferSeparateStreamSettingsWindows: Chiaki.window.runtimeRendererBackend === 1 && Chiaki.session
     property bool useSeparateStreamSettingsWindows: false
@@ -264,8 +265,8 @@ Item {
         stack.push(profileDialogComponent)
     }
 
-    function showConsolePinDialog(consoleIndex) {
-        stack.push(consolePinDialogComponent, {consoleIndex: consoleIndex});
+    function showConsolePinDialog(routeId) {
+        stack.push(consolePinDialogComponent, {routeId: routeId});
     }
 
     function showSteamShortcutDialog(fromReminder) {

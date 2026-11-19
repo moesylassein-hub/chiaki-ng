@@ -4,6 +4,7 @@ import QtQuick.Controls
 import QtQuick.Controls.Material
 
 import org.streetpea.chiaking
+import "ConnectionRoutes.js" as Routes
 
 Pane {
     id: consolePane
@@ -16,6 +17,24 @@ Pane {
     readonly property color secondaryTextColor: "#aab6c5"
     readonly property color successColor: "#55d68b"
     readonly property color standbyColor: "#f2bd62"
+
+    property string selectedRoute: ""
+    readonly property var routes: Routes.visibleHosts(Chiaki.hosts, root.remoteHome)
+
+    function moveSelection(delta) {
+        if (!routes.length)
+            return
+        const next = (hostsView.currentIndex + delta + routes.length) % routes.length
+        selectedRoute = routes[next].routeId
+        hostsView.positionViewAtIndex(next, ListView.Contain)
+    }
+
+    function remoteAction() {
+        if (Chiaki.settings.psnAuthToken)
+            Chiaki.refreshPsnToken()
+        else
+            root.showPSNTokenDialog(false, false)
+    }
 
     function stateLabel(host) {
         if (host.duid && !host.discovered)
@@ -54,24 +73,19 @@ Pane {
         }
     }
 
-    Keys.onUpPressed: {
-        if (hostsView.currentItem && hostsView.currentItem.visible) {
-            hostsView.decrementCurrentIndex()
-            let guard = hostsView.count
-            while (hostsView.currentItem && !hostsView.currentItem.visible && guard-- > 0)
-                hostsView.decrementCurrentIndex()
-        }
-    }
-    Keys.onDownPressed: {
-        if (hostsView.currentItem && hostsView.currentItem.visible) {
-            hostsView.incrementCurrentIndex()
-            let guard = hostsView.count
-            while (hostsView.currentItem && !hostsView.currentItem.visible && guard-- > 0)
-                hostsView.incrementCurrentIndex()
-        }
-    }
+    Keys.onUpPressed: moveSelection(-1)
+    Keys.onDownPressed: moveSelection(1)
+    Keys.onLeftPressed: root.remoteHome = false
+    Keys.onRightPressed: root.remoteHome = true
     Keys.onMenuPressed: settingsButton.clicked()
-    Keys.onReturnPressed: if (hostsView.currentItem && hostsView.currentItem.visible) hostsView.currentItem.connectToHost()
+    Keys.onReturnPressed: {
+        if (hostsView.currentItem)
+            hostsView.currentItem.connectToHost()
+        else if (root.remoteHome)
+            remoteAction()
+        else
+            root.showManualHostDialog()
+    }
     Keys.onYesPressed: if (hostsView.currentItem && hostsView.currentItem.visible) hostsView.currentItem.wakeUpHost()
     Keys.onNoPressed: if (hostsView.currentItem && hostsView.currentItem.visible) hostsView.currentItem.deleteHost()
     Keys.onEscapePressed: root.showConfirmDialog(qsTr("Quit"), qsTr("Are you sure you want to quit?"), () => Qt.quit())
@@ -133,27 +147,18 @@ Pane {
                     color: "white"
                 }
                 Label {
-                    text: qsTr("Choose a console to start streaming")
+                    text: root.remoteHome ? qsTr("Play away from home") : qsTr("Play on your home network")
                     font.pixelSize: 14
                     color: consolePane.secondaryTextColor
                 }
             }
 
             Button {
-                visible: typeof Chiaki.createSteamShortcut === "function"
+                visible: consolePane.width > 850 && typeof Chiaki.createSteamShortcut === "function"
                 text: qsTr("Steam Shortcut")
                 flat: true
                 focusPolicy: Qt.NoFocus
                 onClicked: root.showSteamShortcutDialog(false)
-                Material.roundedScale: Material.MediumScale
-            }
-
-            Button {
-                visible: Chiaki.settings.psnAuthToken
-                text: qsTr("Refresh PSN")
-                flat: true
-                focusPolicy: Qt.NoFocus
-                onClicked: Chiaki.refreshPsnToken()
                 Material.roundedScale: Material.MediumScale
             }
 
@@ -176,10 +181,45 @@ Pane {
         }
     }
 
+    RowLayout {
+        id: connectionBar
+        anchors.top: header.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: 12
+        anchors.leftMargin: 24
+        anchors.rightMargin: 24
+        spacing: 12
+
+        TabBar {
+            id: routeTabs
+            Layout.fillWidth: true
+            Layout.maximumWidth: 420
+            currentIndex: root.remoteHome ? 1 : 0
+            TabButton {
+                text: qsTr("Local Connect")
+                onClicked: root.remoteHome = false
+            }
+            TabButton {
+                text: qsTr("Remote Connect")
+                onClicked: root.remoteHome = true
+            }
+        }
+        Item { Layout.fillWidth: true }
+        ComboBox {
+            id: playMode
+            Accessible.name: qsTr("Session mode")
+            implicitContentWidthPolicy: ComboBox.WidestText
+            model: [qsTr("Video and audio"), qsTr("Video only"), qsTr("Audio only"), qsTr("Gamepad only")]
+            currentIndex: Chiaki.settings.audioVideoDisabled
+            onActivated: (index) => Chiaki.settings.audioVideoDisabled = index
+        }
+    }
+
     ListView {
         id: hostsView
         anchors {
-            top: header.bottom
+            top: connectionBar.bottom
             left: parent.left
             right: parent.right
             bottom: footer.top
@@ -190,52 +230,44 @@ Pane {
         spacing: 14
         clip: true
         keyNavigationWraps: true
-        model: Chiaki.hosts
-
-        onCountChanged: {
-            if (!hostsView.currentItem)
-                hostsView.incrementCurrentIndex()
-            if (!hostsView.currentItem)
-                return
-            if (!hostsView.currentItem.visible) {
-                for (let i = 0; i < hostsView.count; i++) {
-                    hostsView.incrementCurrentIndex()
-                    if (hostsView.currentItem && hostsView.currentItem.visible)
-                        break
-                }
-            }
-        }
+        model: consolePane.routes
+        currentIndex: count ? Math.max(0, Routes.indexOfRoute(consolePane.routes, consolePane.selectedRoute)) : -1
 
         delegate: ItemDelegate {
             id: delegate
-            visible: modelData.display
             width: ListView.view ? ListView.view.width : 0
-            height: modelData.display ? 156 : 0
+            height: 156
             highlighted: ListView.isCurrentItem
             hoverEnabled: true
             onClicked: connectToHost()
 
             function connectToHost() {
-                if (modelData.discovered)
-                    Chiaki.connectToHost(index, modelData.name)
-                else
-                    Chiaki.connectToHost(index)
+                const idx = Routes.indexOfRoute(Chiaki.hosts, modelData.routeId)
+                if (idx >= 0) {
+                    consolePane.selectedRoute = modelData.routeId
+                    Chiaki.connectToHost(idx, modelData.discovered ? modelData.name : "")
+                }
             }
 
             function wakeUpHost() {
-                if (!modelData.discovered && !modelData.duid)
-                    Chiaki.wakeUpHost(index)
+                if (modelData.registered && !modelData.duid)
+                    Chiaki.wakeUpHost(Routes.indexOfRoute(Chiaki.hosts, modelData.routeId))
             }
 
             function deleteHost() {
-                if (modelData.manual)
-                    root.showConfirmDialog(qsTr("Delete Console"), qsTr("Are you sure you want to delete this console?"), () => Chiaki.deleteHost(index))
-                else if (modelData.discovered && !modelData.registered)
-                    root.showConfirmDialog(qsTr("Hide Console"), qsTr("Are you sure you want to hide this console?") + "\n\n" + qsTr("Note: You can unhide it from Settings → Consoles → Hidden Consoles."), () => Chiaki.hideHost(modelData.mac, modelData.name))
+                const host = modelData
+                if (host.manual) {
+                    root.showConfirmDialog(qsTr("Delete Console"), qsTr("Remove this saved address?"),
+                        () => Chiaki.deleteHost(Routes.indexOfRoute(Chiaki.hosts, host.routeId)))
+                } else if (host.discovered && !host.registered) {
+                    root.showConfirmDialog(qsTr("Hide Console"), qsTr("Hide this console from local discovery?"),
+                        () => Chiaki.hideHost(host.mac, host.name))
+                }
             }
 
             function setConsolePin() {
-                root.showConsolePinDialog(index)
+                if (modelData.registered)
+                    root.showConsolePinDialog(modelData.routeId)
             }
 
             background: Rectangle {
@@ -332,14 +364,10 @@ Pane {
                     spacing: 4
 
                     Button {
-                        text: modelData.state === "standby" && modelData.registered && !modelData.duid && !modelData.discovered ? qsTr("Wake Up") : qsTr("Connect")
+                        text: !modelData.registered ? qsTr("Register") :
+                              modelData.state === "standby" ? qsTr("Wake and connect") : qsTr("Connect")
                         focusPolicy: Qt.NoFocus
-                        onClicked: {
-                            if (modelData.state === "standby" && modelData.registered && !modelData.duid && !modelData.discovered)
-                                delegate.wakeUpHost()
-                            else
-                                delegate.connectToHost()
-                        }
+                        onClicked: delegate.connectToHost()
                         Material.roundedScale: Material.MediumScale
                     }
 
@@ -371,12 +399,14 @@ Pane {
 
     ColumnLayout {
         anchors.centerIn: hostsView
+        width: Math.min(520, hostsView.width)
         visible: hostsView.count === 0
         spacing: 10
 
         Image {
             Layout.alignment: Qt.AlignHCenter
             Layout.preferredWidth: 116
+            visible: hostsView.height > 235
             Layout.preferredHeight: 116
             source: "qrc:/icons/chiaking-logo-white.svg"
             opacity: 0.35
@@ -384,20 +414,25 @@ Pane {
         }
         Label {
             Layout.alignment: Qt.AlignHCenter
-            text: qsTr("No consoles found yet")
+            text: root.remoteHome ? qsTr("No remote consoles") : qsTr("No local consoles")
             color: "white"
             font.pixelSize: 20
             font.weight: Font.DemiBold
         }
         Label {
             Layout.alignment: Qt.AlignHCenter
-            text: Chiaki.discoveryEnabled ? qsTr("Keep your PlayStation on the same network, or add it manually.") : qsTr("Network discovery is off. Turn it on below or add a console manually.")
+            Layout.fillWidth: true
+            horizontalAlignment: Text.AlignHCenter
+            wrapMode: Text.WordWrap
+            text: root.remoteHome
+                ? (Chiaki.settings.psnAuthToken ? qsTr("Register your console locally, then refresh PSN. You can also add a remote address.") : qsTr("Sign in to PSN or add a remote address."))
+                : (Chiaki.discoveryEnabled ? qsTr("Enable Remote Play on your PlayStation and connect it to this network.") : qsTr("Turn on network discovery or add your console by address."))
             color: consolePane.secondaryTextColor
             font.pixelSize: 14
         }
         Button {
             Layout.alignment: Qt.AlignHCenter
-            text: qsTr("Add Console")
+            text: qsTr("Add by address")
             onClicked: root.showManualHostDialog()
         }
     }
@@ -423,6 +458,7 @@ Pane {
 
             Switch {
                 id: discoverySwitch
+                visible: !root.remoteHome
                 text: qsTr("Network discovery")
                 checked: Chiaki.discoveryEnabled
                 focusPolicy: Qt.NoFocus
@@ -430,9 +466,16 @@ Pane {
             }
 
             Label {
+                visible: !root.remoteHome && consolePane.width > 680
                 text: Chiaki.discoveryEnabled ? qsTr("Scanning for local consoles") : qsTr("Discovery paused")
                 color: consolePane.secondaryTextColor
                 font.pixelSize: 12
+            }
+
+            Button {
+                visible: root.remoteHome
+                text: Chiaki.settings.psnAuthToken ? qsTr("Refresh PSN consoles") : qsTr("Sign in to PSN")
+                onClicked: consolePane.remoteAction()
             }
 
             Item { Layout.fillWidth: true }
