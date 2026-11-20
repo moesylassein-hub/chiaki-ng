@@ -6,6 +6,7 @@
 #include <QMutex>
 #include <QAtomicInteger>
 #include <QWindow>
+#include <QUrl>
 #include <QQuickWindow>
 #include <QLoggingCategory>
 #include <deque>
@@ -56,6 +57,10 @@ class DeferredSwapThread;
 class QmlMainWindow : public QWindow
 {
     Q_OBJECT
+    Q_PROPERTY(bool ambientBorderAvailable READ ambientBorderAvailable CONSTANT)
+    Q_PROPERTY(QString videoShaderName READ videoShaderName NOTIFY videoShaderChanged)
+    Q_PROPERTY(QString videoShaderStatus READ videoShaderStatus NOTIFY videoShaderChanged)
+    Q_PROPERTY(bool videoShaderBusy READ videoShaderBusy NOTIFY videoShaderChanged)
     Q_PROPERTY(bool hasVideo READ hasVideo NOTIFY hasVideoChanged)
     Q_PROPERTY(int droppedFrames READ droppedFrames NOTIFY droppedFramesChanged)
     Q_PROPERTY(bool keepVideo READ keepVideo WRITE setKeepVideo NOTIFY keepVideoChanged)
@@ -146,6 +151,13 @@ public:
     VideoPreset videoPreset() const;
     void setVideoPreset(VideoPreset mode);
 
+    bool ambientBorderAvailable() const { return PL_API_VER >= 355; }
+    QString videoShaderName() const { return video_shader_name; }
+    QString videoShaderStatus() const { return video_shader_status; }
+    bool videoShaderBusy() const { return video_shader_busy; }
+    Q_INVOKABLE void importVideoShader(const QUrl &file);
+    Q_INVOKABLE void clearVideoShader();
+
     Q_INVOKABLE void grabInput();
     Q_INVOKABLE void releaseInput();
     Q_INVOKABLE void requestOverlayUpdate();
@@ -171,6 +183,7 @@ public slots:
     AVBufferRef *vulkanHwDeviceCtx();
 
 signals:
+    void videoShaderChanged();
     void hasVideoChanged();
     void droppedFramesChanged();
     void keepVideoChanged();
@@ -453,6 +466,14 @@ private:
     VkPhysicalDeviceDriverProperties vk_device_driver_props = {};
     pl_options renderparams_opts = {};
     bool renderparams_changed = false;
+    void reloadVideoShader();
+    void queueVideoShader(const QVariantMap &shader, bool restore);
+    QString video_shader_name;
+    QString video_shader_status;
+    bool video_shader_busy = false;
+    QAtomicInteger<quint64> video_shader_generation = 0;
+    quint64 active_shader_generation = 0;
+    const struct pl_hook *video_shader_hook = nullptr;
     const struct pl_hook *fsr_hook = nullptr;
     const struct pl_hook *fsrcnnx_hook_8 = nullptr;
     const struct pl_hook *fsrcnnx_hook_16 = nullptr;

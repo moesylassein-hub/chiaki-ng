@@ -46,6 +46,7 @@ Item {
         }
     }
     property list<Item> restoreFocusItems
+    property bool remoteHome: false
     property bool initialAsk: false
     readonly property bool preferSeparateStreamSettingsWindows: Chiaki.window.runtimeRendererBackend === 1 && Chiaki.session
     property bool useSeparateStreamSettingsWindows: false
@@ -185,8 +186,8 @@ Item {
         stack.replace(stack.get(0), psnViewComponent, {}, StackView.Immediate)
     }
 
-    function showManualHostDialog() {
-        stack.push(manualHostDialogComponent);
+    function showManualHostDialog(mac = "") {
+        stack.push(manualHostDialogComponent, {preferredMac: mac});
     }
 
     function showConfirmDialog(title, text, callback, rejectCallback = null) {
@@ -224,8 +225,8 @@ Item {
         stack.push(registDialogComponent, {host: host, ps5: ps5});
     }
 
-    function showSettingsDialog() {
-        stack.push(settingsDialogComponent);
+    function showSettingsDialog(section = 0) {
+        stack.push(settingsDialogComponent, {section: section});
     }
 
     function showDisplaySettingsDialog() {
@@ -264,8 +265,8 @@ Item {
         stack.push(profileDialogComponent)
     }
 
-    function showConsolePinDialog(consoleIndex) {
-        stack.push(consolePinDialogComponent, {consoleIndex: consoleIndex});
+    function showConsolePinDialog(routeId) {
+        stack.push(consolePinDialogComponent, {routeId: routeId});
     }
 
     function showSteamShortcutDialog(fromReminder) {

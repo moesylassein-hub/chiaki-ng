@@ -3,6 +3,9 @@
 #include "qmlmainwindow.h"
 #include "streamsession.h"
 #include "sessionresource.h"
+#include "frameinterpolator.h"
+#include <QScreen>
+#include <iterator>
 #include <memory>
 #include <QJsonDocument>
 #include <QJsonObject>
@@ -36,6 +39,7 @@
 #include <QPixmap>
 #include <QImageReader>
 #include <QProcessEnvironment>
+#include <QPointer>
 #include <QDesktopServices>
 #include <QtConcurrent>
 #include <QTimer>
@@ -293,6 +297,11 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     , settings_qml(new QmlSettings(settings, this))
     , window(window)
 {
+    game_library = new PsnGameLibrary(this);
+    connect(settings_qml, &QmlSettings::streamerModeChanged, game_library, &PsnGameLibrary::clear);
+    connect(settings_qml, &QmlSettings::psnAccountIdChanged, game_library, &PsnGameLibrary::clear);
+    connect(settings_qml, &QmlSettings::psnAuthTokenChanged, game_library, &PsnGameLibrary::clear);
+    connect(this, &QmlBackend::psnCredsExpired, game_library, &PsnGameLibrary::clear);
     health_timer.setInterval(1000);
     connect(&health_timer, &QTimer::timeout, this, &QmlBackend::monitorStreamHealth);
     health_timer.start();
@@ -314,6 +323,7 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     qt_msg_handler = qInstallMessageHandler(msg_handler);
 
     const char *uri = "org.streetpea.chiaking";
+    qmlRegisterUncreatableType<PsnGameLibrary>(uri, 1, 0, "PsnGameLibrary", {});
     qmlRegisterSingletonInstance(uri, 1, 0, "Chiaki", this);
     qmlRegisterUncreatableType<QmlMainWindow>(uri, 1, 0, "ChiakiWindow", {});
     qmlRegisterUncreatableType<QmlSettings>(uri, 1, 0, "ChiakiSettings", {});
@@ -330,10 +340,18 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     connect(&psn_connection_thread, &QThread::finished, worker, &QObject::deleteLater);
     connect(this, &QmlBackend::psnConnect, worker, &PsnConnectionWorker::ConnectPsnConnection);
     connect(worker, &PsnConnectionWorker::resultReady, this, &QmlBackend::checkPsnConnection);
-    connect(&psn_hosts_watcher, &QFutureWatcher<void>::finished, [this]{ this->updating_psn_hosts = false; });
     psn_connection_thread.start();
 
     setConnectState(PsnConnectState::NotStarted);
+    connect(settings_qml, &QmlSettings::rememberGamesChanged, this, &QmlBackend::hostsChanged);
+    connect(settings_qml, &QmlSettings::psnAuthTokenChanged, this, [this] {
+        if (this->settings->GetPsnAuthToken().isEmpty()) {
+            psn_hosts.clear();
+            psn_nickname_hosts.clear();
+            emit hostsChanged();
+        }
+    });
+    connect(settings_qml, &QmlSettings::streamerModeChanged, this, &QmlBackend::hostsChanged);
     connect(settings_qml, &QmlSettings::audioVolumeChanged, this, &QmlBackend::updateAudioVolume);
     connect(settings_qml, &QmlSettings::placeboChanged, window, &QmlMainWindow::updatePlacebo);
         connect(settings_qml,
@@ -615,6 +633,7 @@ QList<QmlController*> QmlBackend::qmlControllers() const
 
 void QmlBackend::profileChanged()
 {
+    game_library->clear();
     cancelRecovery();
     settings->EndVideoTrial();
     QString profile = settings->GetCurrentProfile();
@@ -623,6 +642,8 @@ void QmlBackend::profileChanged()
         settings->deleteLater();
     settings_allocd = true;
     settings = settings_copy;
+    psn_hosts.clear();
+    psn_nickname_hosts.clear();
     emit hostsChanged();
     updateControllerMappings();
     connect(settings, &Settings::RegisteredHostsUpdated, this, &QmlBackend::hostsChanged);
@@ -768,9 +789,8 @@ void QmlBackend::setConnectState(PsnConnectState connect_state)
 QVariantList QmlBackend::hosts() const
 {
     QVariantList out;
-    QList<QString> discovered_nicknames;
+    const bool showHistory = settings->GetRememberGames() && !settings->GetStreamerMode();
     QList<ManualHost> discovered_manual_hosts;
-    size_t registered_discovered_ps4s = 0;
     auto manual_hosts = settings->GetManualHosts();
     for (const auto &host : discovery_manager.GetHosts()) {
         QVariantMap m;
@@ -819,19 +839,20 @@ QVariantList QmlBackend::hosts() const
         m["ps5"] = host.ps5;
         m["mac"] = host_mac.ToString();
         m["state"] = chiaki_discovery_host_state_string(host.state);
+        if (registered && showHistory)
+            m["recentGames"] = settings->RecentGames(host_mac);
         m["app"] = host.running_app_name;
         m["titleId"] = host.running_app_titleid;
         m["registered"] = registered;
         m["display"] = hidden ? false : true;
-        discovered_nicknames.append(host.host_name);
+        m["routeId"] = QStringLiteral("lan/%1/%2").arg(host_mac.ToString(), host.host_addr);
         out.append(m);
-        if(!host.ps5 && registered)
-            registered_discovered_ps4s++;
     }
     for (const auto &host : settings->GetManualHosts()) {
         QVariantMap m;
         m["discovered"] = false;
         m["manual"] = true;
+        m["routeId"] = QStringLiteral("address/%1").arg(host.GetID());
         m["name"] = host.GetHost();
         m["duid"] = "";
         m["address"] = host.GetHost();
@@ -844,30 +865,21 @@ QVariantList QmlBackend::hosts() const
             m["name"] = registered.GetServerNickname();
             m["ps5"] = chiaki_target_is_ps5(registered.GetTarget());
             m["mac"] = registered.GetServerMAC().ToString();
+            if (showHistory)
+                m["recentGames"] = settings->RecentGames(registered.GetServerMAC());
         }
         out.append(m);
     }
-    if(registered_discovered_ps4s >= settings->GetPS4RegisteredHostsRegistered())
-        discovered_nicknames.append(QString("Main PS4 Console"));
+    // Keep one entry per route, including temporarily hidden entries. All
+    // consumers use the same discovery/manual/PSN ordering as displayServerAt.
     for (const auto &host : psn_hosts) {
         QVariantMap m;
-        // Only list PSN remote hosts that aren't discovered locally
-        bool discovered = false;
-        for (int i = 0; i < discovered_nicknames.size(); ++i)
-        {
-            if (discovered_nicknames.at(i) == host.GetName())
-                discovered = true;
-        }
-        for (int i = 0; i < waking_sleeping_nicknames.size(); ++i)
-        {
-            if (waking_sleeping_nicknames.at(i) == host.GetName())
-                discovered = true;
-        }
-        if(discovered)
-            continue;
         m["discovered"] = false;
         m["manual"] = false;
-        m["display"] = true;
+        m["display"] = !waking_sleeping_nicknames.contains(host.GetName());
+        m["routeId"] = QStringLiteral("psn/") + host.GetDuid();
+        if (showHistory && host.IsPS5() && settings->GetNicknameRegisteredHostRegistered(host.GetName()))
+            m["recentGames"] = settings->RecentGames(settings->GetNicknameRegisteredHost(host.GetName()).GetServerMAC());
         m["name"] = host.GetName();
         m["duid"] = host.GetDuid();
         m["address"] = "";
@@ -1022,7 +1034,10 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
     recovery_healthy_since_ms = 0;
     stream_health.reset(recovery_started_ms);
     session_info = connect_info;
-    window->setStreamMaxFPS(connect_info.video_profile.max_fps);
+    const auto source_fps = connect_info.video_profile.max_fps;
+    const bool interpolate = settings->GetMotionInterpolation() && source_fps > 0 &&
+        window->screen() && window->screen()->refreshRate() >= 1.95 * source_fps;
+    window->setStreamMaxFPS(interpolate ? 2 * source_fps : source_fps);
     disable_zero_copy = !settings->GetUseZeroCopy();
     {
         QMutexLocker locker(&hw_transfer_state_mutex);
@@ -1180,8 +1195,12 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
     connect(session, &StreamSession::FfmpegDecoderClosing, this, [frame_resource]() {
         frame_resource->Close();
     }, Qt::DirectConnection);
+    auto interpolator = interpolate ? std::make_shared<FrameInterpolator>() : nullptr;
+    // This sequence is only touched on the GUI thread. A newer source frame supersedes a late timer.
+    auto presentation_sequence = std::make_shared<quint64>(0);
     connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(),
-            [this, use_opengl_renderer, frame_resource, session_for_connections]() {
+            [this, use_opengl_renderer, frame_resource, session_for_connections, interpolator,
+             presentation_sequence, retry_interpolation_us = qint64(0)]() mutable {
         frame_resource->Use([&](ChiakiFfmpegDecoder *decoder) {
             int32_t frames_lost;
             ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
@@ -1209,19 +1228,51 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
                 frame.recovered = true;
             }
 
+            const auto own = [](AVFrame *ptr) {
+                return std::shared_ptr<AVFrame>(ptr, [](AVFrame *f) { av_frame_free(&f); });
+            };
+            std::shared_ptr<AVFrame> midpoint;
+            double half_interval = 0.0;
+            if (interpolator && prepare_end_us >= retry_interpolation_us) {
+                half_interval = (frame.pts - interpolator->previousPts()) * 0.5;
+                midpoint = own(interpolator->push(frame.frame, frame.pts, frame.duration, frame.recovered || frames_lost > 0));
+                const auto elapsed = static_cast<qint64>(chiaki_time_now_monotonic_us()) - prepare_end_us;
+                if (frame.duration > 0 && elapsed > frame.duration * 800000.0) {
+                    // Give slow devices a breather and keep delivering real frames under load.
+                    midpoint.reset();
+                    retry_interpolation_us = prepare_end_us + 2000000;
+                }
+            }
             const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
             QmlMainWindow *target_window = window;
             // Own queued frames even if the receiver is destroyed before delivery.
-            auto owned_frame = std::shared_ptr<AVFrame>(frame.frame, [](AVFrame *f) { av_frame_free(&f); });
+            auto owned_frame = own(frame.frame);
             QMetaObject::invokeMethod(this, [this, target_window, frame, owned_frame, frame_resource,
-                                          session_for_connections, frames_lost, delivery_us]() mutable {
+                                          session_for_connections, frames_lost, delivery_us, midpoint,
+                                          half_interval, presentation_sequence]() mutable {
                 if (session != session_for_connections || !frame_resource->IsOpen())
                     return;
                 recovery_last_frame_ms = chiaki_time_now_monotonic_us() / 1000;
-                // presentFrame takes ownership; the queued event keeps its own reference.
-                frame.frame = av_frame_clone(owned_frame.get());
-                if (frame.frame)
-                    target_window->presentFrame(frame, frames_lost, delivery_us);
+                const quint64 seq = ++*presentation_sequence;
+                auto present_source = [this, target_window, session_for_connections, frame_resource, frame, owned_frame,
+                                       frames_lost, delivery_us, presentation_sequence, seq]() mutable {
+                    if (session != session_for_connections || !frame_resource->IsOpen() || *presentation_sequence != seq)
+                        return;
+                    frame.frame = av_frame_clone(owned_frame.get());
+                    if (frame.frame)
+                        target_window->presentFrame(frame, frames_lost, delivery_us);
+                };
+                const auto age = static_cast<qint64>(chiaki_time_now_monotonic_us()) - delivery_us;
+                const int delay = midpoint ? qRound(half_interval * 1000.0) : 0;
+                if (midpoint && delay > 0 && age < delay * 1000) {
+                    ChiakiFfmpegFrame generated{av_frame_clone(midpoint.get()), frame.pts - half_interval, half_interval, false};
+                    if (generated.frame) {
+                        target_window->presentFrame(generated, 0, delivery_us);
+                        QTimer::singleShot(delay, Qt::PreciseTimer, this, std::move(present_source));
+                        return;
+                    }
+                }
+                present_source();
             });
         });
     });
@@ -1916,33 +1967,15 @@ QmlBackend::DisplayServer QmlBackend::displayServerAt(int index) const
     {
         DisplayServer server;
 
-        QMapIterator<QString, PsnHost> i(psn_hosts);
-        size_t j = 0;
-        while (i.hasNext())
-        {
-            i.next();
-            PsnHost psn_host = i.value();
-            bool hidden = false;
-            for (const auto &host : discovery_manager.GetHosts())
-            {
-                if(host.host_name == psn_host.GetName())
-                    hidden = true;
-            }
-            if(hidden)
-                continue;
-            if(j == index)
-            {
-                server.valid = true;
-                server.discovered = false;
-                server.psn_host = std::move(psn_host);
-                server.duid = i.key();
-                server.registered = true;
-                server.registered_host = settings->GetNicknameRegisteredHost(server.psn_host.GetName());
-                return server;
-            }
-            j++;
-        }
-        return {};
+        auto it = psn_hosts.constBegin();
+        std::advance(it, index);
+        server.valid = true;
+        server.discovered = false;
+        server.psn_host = it.value();
+        server.duid = it.key();
+        server.registered = true;
+        server.registered_host = settings->GetNicknameRegisteredHost(server.psn_host.GetName());
+        return server;
     }
     return {};
 }
@@ -2449,6 +2482,10 @@ void QmlBackend::controllerMappingApply()
 
 void QmlBackend::updateDiscoveryHosts()
 {
+    if (settings->GetRememberGames() && !settings->GetStreamerMode()) {
+        for (const auto &host : discovery_manager.GetHosts())
+            settings->NoteRunningGame(host.GetHostMAC(), host.running_app_name);
+    }
     // Wakeup console that we are currently connecting to
     for (const auto &host : discovery_manager.GetHosts()) {
         if (host.host_addr != session_info.host)
@@ -2684,6 +2721,15 @@ void QmlBackend::initPsnAuth(const QUrl &url, const QJSValue &callback)
     emit psnTokenChanged();
 }
 
+void QmlBackend::refreshRecentGames()
+{
+    if (settings->GetStreamerMode()) {
+        game_library->clear();
+        return;
+    }
+    game_library->refresh(settings->GetPsnAuthToken());
+}
+
 void QmlBackend::refreshAuth()
 {
     PSNToken *psnToken = new PSNToken(settings, this);
@@ -2707,24 +2753,51 @@ void QmlBackend::updatePsnHosts()
         qCInfo(chiakiGui) << "Already updating psn hosts, skipping...";
         return;
     }
-    psn_hosts_future = QtConcurrent::run(&QmlBackend::updatePsnHostsThread, this);
-    psn_hosts_watcher.setFuture(psn_hosts_future);
+    const QString token = settings->GetPsnAuthToken();
+    if (token.isEmpty())
+        return;
     updating_psn_hosts = true;
+    auto *watcher = new QFutureWatcher<PsnDeviceList>(this);
+    QPointer<Settings> owner(settings);
+    connect(watcher, &QFutureWatcher<PsnDeviceList>::finished, this, [this, watcher, owner, token] {
+        const auto result = watcher->result();
+        watcher->deleteLater();
+        updating_psn_hosts = false;
+        if (owner.data() != settings || settings->GetPsnAuthToken() != token) {
+            updatePsnHosts();
+            return;
+        }
+        if (result.refreshed) {
+            psn_nickname_hosts.clear();
+            psn_hosts.clear();
+            for (const auto &host : result.devices) {
+                if (!psn_nickname_hosts.contains(host.GetName()))
+                    psn_nickname_hosts.insert(host.GetName(), host);
+                if (settings->GetNicknameRegisteredHostRegistered(host.GetName()))
+                    psn_hosts.insert(host.GetDuid(), host);
+            }
+        }
+        const PsnHost ps4(QString::fromLatin1(QByteArray(32, 'A').toHex()), QStringLiteral("Main PS4 Console"), false);
+        psn_nickname_hosts.insert(ps4.GetName(), ps4);
+        if (settings->GetPS4RegisteredHostsRegistered() > 0)
+            psn_hosts.insert(ps4.GetDuid(), ps4);
+        else
+            psn_hosts.remove(ps4.GetDuid());
+        emit hostsChanged();
+    });
+    watcher->setFuture(QtConcurrent::run(&QmlBackend::fetchPsnDevices, token, settings->GetLogLevelMask()));
 }
 
-void QmlBackend::updatePsnHostsThread()
+QmlBackend::PsnDeviceList QmlBackend::fetchPsnDevices(QString token, uint32_t logMask)
 {
-    QString psn_token = settings->GetPsnAuthToken();
-    if(psn_token.isEmpty())
-        return;
-
+    PsnDeviceList result;
     ChiakiHolepunchDeviceInfo *device_info_ps5 = nullptr;
     size_t num_devices_ps5 = 0;
     ChiakiLog backend_log;
-    chiaki_log_init(&backend_log, settings->GetLogLevelMask(), chiaki_log_cb_print, nullptr);
+    chiaki_log_init(&backend_log, logMask, chiaki_log_cb_print, nullptr);
     for(int i = 0; i < PSN_DEVICES_TRIES; i++)
     {
-        ChiakiErrorCode err = chiaki_holepunch_list_devices(psn_token.toUtf8().constData(), CHIAKI_HOLEPUNCH_CONSOLE_TYPE_PS5, &device_info_ps5, &num_devices_ps5, &backend_log);
+        ChiakiErrorCode err = chiaki_holepunch_list_devices(token.toUtf8().constData(), CHIAKI_HOLEPUNCH_CONSOLE_TYPE_PS5, &device_info_ps5, &num_devices_ps5, &backend_log);
         if (err != CHIAKI_ERR_SUCCESS)
         {
             if(PSN_DEVICES_TRIES - i > 1)
@@ -2738,6 +2811,7 @@ void QmlBackend::updatePsnHostsThread()
                 num_devices_ps5 = 0;
             }
         }
+        result.refreshed = err == CHIAKI_ERR_SUCCESS;
         break;
     }
     for (size_t i = 0; i < num_devices_ps5; i++)
@@ -2749,27 +2823,11 @@ void QmlBackend::updatePsnHostsThread()
         QByteArray duid_bytes(reinterpret_cast<char*>(dev.device_uid), sizeof(dev.device_uid));
         QString duid = QString(duid_bytes.toHex());
         QString name = QString(dev.device_name);
-        bool ps5 = true;
-        PsnHost psn_host(duid, name, ps5);
-        if(!psn_nickname_hosts.contains(name))
-            psn_nickname_hosts.insert(name, psn_host);
-	    if(!psn_hosts.contains(duid) && settings->GetNicknameRegisteredHostRegistered(name))
-		    psn_hosts.insert(duid, psn_host);
+        result.devices.append(PsnHost(duid, name, true));
     }
-    QByteArray duid_bytes(32, 'A');
-    QString duid = QString(duid_bytes.toHex());
-    QString name = QString("Main PS4 Console");
-    bool ps5 = false;
-    PsnHost psn_host(duid, name, ps5);
-    if(!psn_nickname_hosts.contains(name))
-        psn_nickname_hosts.insert(name, psn_host);
-    if(!psn_hosts.contains(duid) && (settings->GetPS4RegisteredHostsRegistered() > 0))
-        psn_hosts.insert(duid, psn_host);
-
-    emit hostsChanged();
-    qCInfo(chiakiGui) << "Updated PSN hosts";
-    if(device_info_ps5)
+    if (device_info_ps5)
         chiaki_holepunch_free_device_list(&device_info_ps5);
+    return result;
 }
 
 void QmlBackend::refreshPsnToken()

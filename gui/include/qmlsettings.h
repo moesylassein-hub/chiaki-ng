@@ -39,6 +39,12 @@ class QmlSettings : public QObject
     Q_PROPERTY(int displayTargetContrast READ displayTargetContrast WRITE setDisplayTargetContrast NOTIFY displayTargetContrastChanged)
     Q_PROPERTY(int displayTargetPeak READ displayTargetPeak WRITE setDisplayTargetPeak NOTIFY displayTargetPeakChanged)
     Q_PROPERTY(int displayTargetPrim READ displayTargetPrim WRITE setDisplayTargetPrim NOTIFY displayTargetPrimChanged)
+    Q_PROPERTY(int homeBackground READ homeBackground WRITE setHomeBackground NOTIFY homeBackgroundChanged)
+    Q_PROPERTY(bool hideLinkTile READ hideLinkTile WRITE setHideLinkTile NOTIFY hideLinkTileChanged)
+    Q_PROPERTY(bool showGameShelf READ showGameShelf WRITE setShowGameShelf NOTIFY showGameShelfChanged)
+    Q_PROPERTY(bool showWakeAction READ showWakeAction WRITE setShowWakeAction NOTIFY showWakeActionChanged)
+    Q_PROPERTY(bool motionInterpolation READ motionInterpolation WRITE setMotionInterpolation NOTIFY motionInterpolationChanged)
+    Q_PROPERTY(bool ambientBorder READ ambientBorder WRITE setAmbientBorder NOTIFY ambientBorderChanged)
     Q_PROPERTY(int displayTargetTrc READ displayTargetTrc WRITE setDisplayTargetTrc NOTIFY displayTargetTrcChanged)
     Q_PROPERTY(bool fullscreenDoubleClick READ fullscreenDoubleClick WRITE setFullscreenDoubleClick NOTIFY fullscreenDoubleClickChanged)
     Q_PROPERTY(int fpsLocalPS4 READ fpsLocalPS4 WRITE setFpsLocalPS4 NOTIFY fpsLocalPS4Changed)
@@ -84,6 +90,8 @@ class QmlSettings : public QObject
     Q_PROPERTY(QString psnAuthTokenExpiry READ psnAuthTokenExpiry WRITE setPsnAuthTokenExpiry NOTIFY psnAuthTokenExpiryChanged)
     Q_PROPERTY(QString psnAccountId READ psnAccountId WRITE setPsnAccountId NOTIFY psnAccountIdChanged)
     Q_PROPERTY(bool mouseTouchEnabled READ mouseTouchEnabled WRITE setMouseTouchEnabled NOTIFY mouseTouchEnabledChanged)
+    Q_PROPERTY(bool rememberGames READ rememberGames WRITE setRememberGames NOTIFY rememberGamesChanged)
+    Q_PROPERTY(bool consoleTextEntry READ consoleTextEntry WRITE setConsoleTextEntry NOTIFY consoleTextEntryChanged)
     Q_PROPERTY(bool keyboardEnabled READ keyboardEnabled WRITE setKeyboardEnabled NOTIFY keyboardEnabledChanged)
     Q_PROPERTY(bool dpadTouchEnabled READ dpadTouchEnabled WRITE setDpadTouchEnabled NOTIFY dpadTouchEnabledChanged)
     Q_PROPERTY(bool iDROnFECFailureEnabled READ iDROnFECFailureEnabled WRITE setIDROnFECFailureEnabled NOTIFY iDROnFECFailureEnabledChanged)
@@ -201,6 +209,18 @@ public:
     int displayTargetPrim() const;
     void setDisplayTargetPrim(int prim);
 
+    int homeBackground() const;
+    void setHomeBackground(int value);
+    bool hideLinkTile() const;
+    void setHideLinkTile(bool value);
+    bool showGameShelf() const;
+    void setShowGameShelf(bool value);
+    bool showWakeAction() const;
+    void setShowWakeAction(bool value);
+    bool motionInterpolation() const;
+    void setMotionInterpolation(bool enabled);
+    bool ambientBorder() const;
+    void setAmbientBorder(bool enabled);
     int displayTargetTrc() const;
     void setDisplayTargetTrc(int trc);
 
@@ -556,6 +576,10 @@ public:
     bool mouseTouchEnabled() const;
     void setMouseTouchEnabled(bool enabled);
 
+    bool rememberGames() const { return settings->GetRememberGames(); }
+    void setRememberGames(bool enabled) { settings->SetRememberGames(enabled); emit rememberGamesChanged(); }
+    bool consoleTextEntry() const { return settings->GetConsoleTextEntry(); }
+    void setConsoleTextEntry(bool enabled) { settings->SetConsoleTextEntry(enabled); emit consoleTextEntryChanged(); }
     bool keyboardEnabled() const;
     void setKeyboardEnabled(bool enabled);
 
@@ -668,6 +692,12 @@ signals:
     void displayTargetPeakChanged();
     void displayTargetContrastChanged();
     void displayTargetPrimChanged();
+    void homeBackgroundChanged();
+    void hideLinkTileChanged();
+    void showGameShelfChanged();
+    void showWakeActionChanged();
+    void motionInterpolationChanged();
+    void ambientBorderChanged();
     void displayTargetTrcChanged();
     void audioBufferSizeChanged();
     void audioVolumeChanged();
@@ -693,6 +723,8 @@ signals:
     void psnAuthTokenExpiryChanged();
     void psnAccountIdChanged();
     void mouseTouchEnabledChanged();
+    void rememberGamesChanged();
+    void consoleTextEntryChanged();
     void keyboardEnabledChanged();
     void dpadTouchEnabledChanged();
     void dpadTouchIncrementChanged();

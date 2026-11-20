@@ -362,7 +362,21 @@ class Settings : public QObject
 		int GetDisplayTargetPeak() const;
 		void SetDisplayTargetPeak(int peak);
 
-		int GetDisplayTargetTrc() const;
+		int GetHomeBackground() const;
+	void SetHomeBackground(int value);
+	bool GetHideLinkTile() const;
+	void SetHideLinkTile(bool value);
+	bool GetShowGameShelf() const;
+	void SetShowGameShelf(bool value);
+	bool GetShowWakeAction() const;
+	void SetShowWakeAction(bool value);
+	bool GetMotionInterpolation() const;
+	void SetMotionInterpolation(bool enabled);
+	bool GetAmbientBorder() const;
+	void SetAmbientBorder(bool enabled);
+	QVariantMap GetLocalVideoShader() const;
+	void SetLocalVideoShader(const QVariantMap &shader);
+	int GetDisplayTargetTrc() const;
 		void SetDisplayTargetTrc(int trc);
 
 		int GetDisplayTargetPrim() const;
@@ -447,6 +461,8 @@ class Settings : public QObject
 		QString GetCurrentProfile() const;
 		void SetCurrentProfile(QString profile);
 
+		bool GetConsoleTextEntry() const;
+		void SetConsoleTextEntry(bool enabled);
 		bool GetKeyboardEnabled() const;
 		void SetKeyboardEnabled(bool enabled);
 
@@ -719,6 +735,10 @@ class Settings : public QObject
 		QList<RegisteredHost> GetRegisteredHosts() const			{ return registered_hosts.values(); }
 		void AddRegisteredHost(const RegisteredHost &host);
 		void RemoveRegisteredHost(const HostMAC &mac);
+		bool GetRememberGames() const { return settings.value("settings/remember_games", false).toBool(); }
+		void SetRememberGames(bool enabled);
+		QStringList RecentGames(const HostMAC &mac) const;
+		void NoteRunningGame(const HostMAC &mac, const QString &title);
 		bool GetRegisteredHostRegistered(const HostMAC &mac) const	{ return registered_hosts.contains(mac); }
 		RegisteredHost GetRegisteredHost(const HostMAC &mac) const	{ return registered_hosts[mac]; }
 		QList<HiddenHost> GetHiddenHosts() const 					{ return hidden_hosts.values(); }

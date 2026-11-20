@@ -7,7 +7,7 @@ if(APPLE)
 	enable_language(OBJCXX)
 endif()
 
-find_package(Qt6 REQUIRED COMPONENTS Core Gui Concurrent Svg Qml Quick Widgets)
+find_package(Qt6 REQUIRED COMPONENTS Core Gui Network Concurrent Svg Qml Quick Widgets)
 if(Qt6_VERSION VERSION_GREATER_EQUAL "6.10.0")
 	find_package(Qt6 REQUIRED COMPONENTS GuiPrivate)
 endif()
@@ -24,6 +24,8 @@ set(SOURCE_FILES
 	src/main.cpp
 	include/discoverymanager.h
 	src/discoverymanager.cpp
+	include/frameinterpolator.h
+	src/frameinterpolator.cpp
 	include/streamsession.h
 	src/streamsession.cpp
 	include/sessionlog.h
@@ -37,6 +39,8 @@ set(SOURCE_FILES
 	src/controllermanager.cpp
 	include/psnaccountid.h
 	src/psnaccountid.cpp
+	include/psngamelibrary.h
+	src/psngamelibrary.cpp
 	include/psntoken.h
 	src/psntoken.cpp
 	include/jsonrequester.h
@@ -104,7 +108,7 @@ if(CHIAKI_ENABLE_CLI)
 	target_link_libraries(chiaki chiaki-cli-lib)
 endif()
 
-target_link_libraries(chiaki Qt::Core Qt::Gui Qt::GuiPrivate Qt::Concurrent Qt::Svg Qt::Qml Qt::Quick Qt::Widgets)
+target_link_libraries(chiaki Qt::Core Qt::Network Qt::Gui Qt::GuiPrivate Qt::Concurrent Qt::Svg Qt::Qml Qt::Quick Qt::Widgets)
 if (${Qt6DBus_FOUND} AND NOT WIN32)
 	target_link_libraries(chiaki Qt::DBus)
 if (NOT APPLE)

@@ -26,9 +26,9 @@ jobs:
           submodules: recursive
       - uses: msys2/setup-msys2@v2
         with:
-          msystem: mingw64
+          msystem: UCRT64
           update: true
-          install: git diffutils
+          install: git diffutils make unzip zip
           pacboy: >-
             ca-certificates:p
             cc:p
@@ -53,7 +53,7 @@ jobs:
             python-psutil:p
             python-glad:p
             python-jinja:p
-            python-pip:p
+            python-protobuf:p
             qt6-base:p
             qt6-declarative:p
             qt6-svg:p
@@ -64,12 +64,21 @@ jobs:
             vulkan-headers:p
             libevent:p
             
-      - name: Install python protobuf and zip
+      - name: Test desktop Remote Play controls
         run: |
-          pip install protobuf
-          pacman -S git make unzip zip --noconfirm
+          export QT_QUICK_BACKEND=software QT_QUICK_CONTROLS_STYLE=Material
+          result=0
+          qmltestrunner -input test/desktop-play -platform offscreen -o desktop-tests.txt,txt || result=$?
+          cat desktop-tests.txt
+          exit "$result"
 
-      - name: Build libbplacebo
+      - name: Test account game history with an offline transport
+        run: |
+          "$(qtpaths6 --query QT_INSTALL_LIBEXECS)/moc" gui/include/psngamelibrary.h -o moc_psngamelibrary.cpp
+          g++ -std=c++17 -Igui/include test/desktop-play/psn-games.cpp gui/src/psngamelibrary.cpp moc_psngamelibrary.cpp $(pkg-config --cflags --libs Qt6Core Qt6Network) -o psn-games-test.exe
+          ./psn-games-test.exe
+
+      - name: Build libplacebo
         run: |
           scripts/build-libplacebo-windows.sh
 
@@ -77,18 +86,23 @@ jobs:
         run: |
           curl -LO https://github.com/streetpea/FFmpeg-Builds/releases/download/latest/ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip
           unzip ffmpeg-n7.1-latest-win64-gpl-shared-7.1.zip
-          cp -a "ffmpeg-n7.1-latest-win64-gpl-shared-7.1/bin/." /mingw64/bin
-          cp -a "ffmpeg-n7.1-latest-win64-gpl-shared-7.1/include/." /mingw64/include
-          cp -a "ffmpeg-n7.1-latest-win64-gpl-shared-7.1/lib/." /mingw64/lib
+          cp -a "ffmpeg-n7.1-latest-win64-gpl-shared-7.1/bin/." /ucrt64/bin
+          cp -a "ffmpeg-n7.1-latest-win64-gpl-shared-7.1/include/." /ucrt64/include
+          cp -a "ffmpeg-n7.1-latest-win64-gpl-shared-7.1/lib/." /ucrt64/lib
+
+      - name: Test motion interpolation on actual frame buffers
+        run: |
+          g++ -std=c++17 -O2 -Igui/include test/desktop-play/frame-interpolation.cpp gui/src/frameinterpolator.cpp -lavutil -o frame-interpolation-test.exe
+          ./frame-interpolation-test.exe
 
       - name: Build sdl2-compat
         run: |
-          INSTALL_PREFIX=/mingw64 scripts/build-sdl2-compat.sh .
-          cp /mingw64/lib/pkgconfig/sdl2-compat.pc /mingw64/lib/pkgconfig/sdl2.pc
+          INSTALL_PREFIX=/ucrt64 scripts/build-sdl2-compat.sh .
+          cp /ucrt64/lib/pkgconfig/sdl2-compat.pc /ucrt64/lib/pkgconfig/sdl2.pc
 
       - name: Configure chiaki-ng
         run: |
-          cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCHIAKI_ENABLE_CLI=OFF
+          cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCMAKE_POLICY_VERSION_MINIMUM=3.5 -DCHIAKI_ENABLE_CLI=OFF
 
       - name: Build chiaki-ng
         run: |
@@ -96,7 +110,7 @@ jobs:
           
       - name: Deploy chiaki-ng
         run: |
-          ./scripts/deploy-windows-msys2.sh chiaki-ng-Win build/gui/chiaki.exe "${{ github.workspace }}/build/third-party/cpp-steam-tools" /mingw64 gui/src/qml
+          ./scripts/deploy-windows-msys2.sh chiaki-ng-Win build/gui/chiaki.exe "${{ github.workspace }}/build/third-party/cpp-steam-tools" /ucrt64 gui/src/qml
 
       - name: Package chiaki-ng
         run: |
@@ -146,7 +160,7 @@ jobs:
         run: |
           brew update
           brew uninstall pkgconfig || true
-          brew install qt@6 ffmpeg pkgconfig opus openssl cmake ninja nasm protobuf@29 speexdsp libplacebo wget python-setuptools json-c miniupnpc libevent
+          brew install qt@6 ffmpeg pkgconfig opus openssl@3 cmake ninja nasm protobuf@29 speexdsp libplacebo wget python-setuptools json-c miniupnpc libevent
 
       - name: Install sdl2-compat
         run: |
@@ -155,7 +169,7 @@ jobs:
 
       - name: Configure chiaki-ng
         run: |
-          cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCHIAKI_ENABLE_CLI=OFF -DCHIAKI_ENABLE_STEAMDECK_NATIVE=OFF -DCMAKE_PREFIX_PATH="$(brew --prefix)/opt/@openssl@3;$(brew --prefix)/opt/qt@6;$(brew --prefix)/opt/protobuf@29"
+          cmake -S . -B build -G "Ninja" -DCMAKE_BUILD_TYPE=Release -DCHIAKI_ENABLE_CLI=OFF -DCHIAKI_ENABLE_STEAMDECK_NATIVE=OFF -DCMAKE_PREFIX_PATH="$(brew --prefix openssl@3);$(brew --prefix)/opt/qt@6;$(brew --prefix)/opt/protobuf@29"
 
       - name: Build chiaki-ng
         run: |

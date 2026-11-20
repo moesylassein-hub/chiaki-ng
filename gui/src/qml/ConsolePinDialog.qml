@@ -6,12 +6,14 @@ import QtQuick.Controls.Material
 import org.streetpea.chiaking
 
 import "controls" as C
+import "ConnectionRoutes.js" as Routes
 
 DialogView {
-    property var consoleIndex
+    required property string routeId
+    readonly property int consoleIndex: Routes.indexOfRoute(Chiaki.hosts, routeId)
     title: qsTr("Set console pin")
     buttonText: qsTr("Set")
-    buttonEnabled: pin.acceptableInput
+    buttonEnabled: pin.acceptableInput && consoleIndex >= 0
     onAccepted: {
         Chiaki.setConsolePin(consoleIndex, pin.text.trim());
         stack.pop();

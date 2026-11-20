@@ -41,6 +41,8 @@ int main(int argc, char *argv[]) { return real_main(argc, argv); }
 #endif
 
 #include <QCommandLineParser>
+#include <QDir>
+#include <QSettings>
 #include <QMap>
 #include <QSurfaceFormat>
 
@@ -150,6 +152,9 @@ int real_main(int argc, char *argv[])
 			"Use 'list' to get the nickname.");
 	parser.addPositionalArgument("host", "Address to connect to (when using the stream command).");
 
+	QCommandLineOption config_dir_option("settings-dir", "Store profiles and console registrations in this directory.", "directory");
+	parser.addOption(config_dir_option);
+
 	QCommandLineOption profile_option("profile", "", "profile", "Configuration profile");
 	parser.addOption(profile_option);
 
@@ -178,6 +183,15 @@ int real_main(int argc, char *argv[])
 	parser.addOption(passcode_option);
 
 	parser.process(app);
+	if (parser.isSet(config_dir_option)) {
+		const QString path = parser.value(config_dir_option);
+		if (path.isEmpty() || !QDir().mkpath(path) || !QFileInfo(path).isWritable()) {
+			fprintf(stderr, "Cannot use the specified settings directory.\n");
+			return 1;
+		}
+		QSettings::setDefaultFormat(QSettings::IniFormat);
+		QSettings::setPath(QSettings::IniFormat, QSettings::UserScope, QDir(path).absolutePath());
+	}
 	QStringList args = parser.positionalArguments();
 
 	Settings settings(parser.isSet(profile_option) ? parser.value(profile_option) : QString());

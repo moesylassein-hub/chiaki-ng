@@ -153,6 +153,8 @@ class StreamSession : public QObject
 	friend class StreamSessionPrivate;
 
 	Q_OBJECT
+	Q_PROPERTY(bool consoleKeyboardOpen READ ConsoleKeyboardOpen NOTIFY ConsoleKeyboardChanged)
+	Q_PROPERTY(QString consoleKeyboardText READ ConsoleKeyboardText NOTIFY ConsoleKeyboardChanged)
 	Q_PROPERTY(QString host READ GetHost CONSTANT)
 	Q_PROPERTY(bool connected READ GetConnected NOTIFY ConnectedChanged)
 	Q_PROPERTY(double measuredBitrate READ GetMeasuredBitrate NOTIFY MeasuredBitrateChanged)
@@ -192,6 +194,10 @@ class StreamSession : public QObject
         uint64_t packet_lost_previous = 0;
 		QAtomicInteger<quint64> decoder_flush_generation{0};
 		bool cant_display = false;
+		bool console_keyboard_enabled = false;
+		bool console_keyboard_open = false;
+		QString console_keyboard_text;
+		void CloseConsoleKeyboard();
 		int haptics_handheld;
 		float rumble_multiplier;
 		int ps5_rumble_intensity;
@@ -353,6 +359,9 @@ class StreamSession : public QObject
         qint64 LastAudioUs() const { return last_audio_us.loadRelaxed(); }
         qint64 LastVideoSampleUs() const { return last_video_sample_us.loadRelaxed(); }
 		void ToggleMute();
+		bool ConsoleKeyboardOpen() const { return console_keyboard_open; }
+		QString ConsoleKeyboardText() const { return console_keyboard_text; }
+		Q_INVOKABLE bool finishConsoleKeyboard(const QString &text, bool accept);
 		void SetLoginPIN(const QString &pin);
 		void GoHome();
 		QString GetHost() { return host; }
@@ -398,6 +407,7 @@ class StreamSession : public QObject
 #endif
 		void DualSenseIntensityChanged(uint8_t intensity);
 		void SessionQuit(ChiakiQuitReason reason, const QString &reason_str);
+		void ConsoleKeyboardChanged();
 		void LoginPINRequested(bool incorrect);
 		void DataHolepunchProgress(bool finished);
 		void AutoRegistSucceeded(const ChiakiRegisteredHost &host);

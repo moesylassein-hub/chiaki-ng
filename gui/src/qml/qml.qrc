@@ -3,7 +3,12 @@
     <file>qtquickcontrols2.conf</file>
     <file>Main.qml</file>
     <file>MainView.qml</file>
+    <file>ConnectionCard.qml</file>
+    <file>GameShelf.qml</file>
+    <file>HomeBackground.qml</file>
+    <file>ConnectionRoutes.js</file>
     <file>StreamView.qml</file>
+    <file>ConsoleKeyboardWindow.qml</file>
     <file>StreamMenuWindow.qml</file>
     <file>ConfirmDialog.qml</file>
     <file>RemindDialog.qml</file>
@@ -12,6 +17,7 @@
     <file>RegistDialog.qml</file>
     <file>SteamShortcutDialog.qml</file>
     <file>SettingsDialog.qml</file>
+    <file>QualityPreset.qml</file>
     <file>DisplaySettingsDialog.qml</file>
     <file>PlaceboSettingsDialog.qml</file>
     <file>PlaceboColorMappingDialog.qml</file>

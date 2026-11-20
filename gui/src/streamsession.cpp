@@ -305,7 +305,7 @@ StreamSessionConnectInfo::StreamSessionConnectInfo(
 	const bool keyboard_controller_enabled_setting = settings->GetKeyboardEnabled();
 	this->keyboard_controller_enabled = keyboard_controller_enabled_setting;
 	this->mouse_touch_enabled = settings->GetMouseTouchEnabled();
-	this->enable_keyboard = false;
+	this->enable_keyboard = settings->GetConsoleTextEntry();
 	this->direct_ps5_controller = chiaki_target_is_ps5(target) && settings->GetDirectPS5Controller();
 	this->enable_dualsense = true;
 	this->enable_idr_on_fec_failure = settings->GetIDROnFECFailureEnabled();
@@ -487,7 +487,8 @@ StreamSession::StreamSession(const StreamSessionConnectInfo &connect_info, QObje
 	chiaki_connect_info.host = host_str.constData();
 	chiaki_connect_info.video_profile = connect_info.video_profile;
 	chiaki_connect_info.video_profile_auto_downgrade = true;
-	chiaki_connect_info.enable_keyboard = false;
+	console_keyboard_enabled = connect_info.enable_keyboard;
+	chiaki_connect_info.enable_keyboard = console_keyboard_enabled;
 	chiaki_connect_info.enable_idr_on_fec_failure = connect_info.enable_idr_on_fec_failure;
 	chiaki_connect_info.enable_dualsense = connect_info.enable_dualsense;
 	chiaki_connect_info.disable_remote_controller = connect_info.direct_ps5_controller;
@@ -854,6 +855,7 @@ void StreamSession::Stop()
 	if (stop_requested)
 		return;
 	stop_requested = true;
+	CloseConsoleKeyboard();
 	const bool waiting_for_retry = retry_timer.isActive();
 	retry_timer.stop();
 	connect_timer.invalidate();
@@ -861,6 +863,29 @@ void StreamSession::Stop()
 	chiaki_session_stop(&session);
 	if (waiting_for_retry)
 		emit SessionQuit(CHIAKI_QUIT_REASON_STOPPED, QString());
+}
+
+void StreamSession::CloseConsoleKeyboard()
+{
+	if (!console_keyboard_open)
+		return;
+	console_keyboard_open = false;
+	console_keyboard_text.clear();
+	emit ConsoleKeyboardChanged();
+}
+
+bool StreamSession::finishConsoleKeyboard(const QString &text, bool accept)
+{
+	if (!console_keyboard_open || stop_requested || !session_started)
+		return false;
+	if (accept && (text.contains(QChar::Null) ||
+		chiaki_session_keyboard_set_text(&session, text.toUtf8().constData()) != CHIAKI_ERR_SUCCESS))
+		return false;
+	const auto result = accept ? chiaki_session_keyboard_accept(&session) : chiaki_session_keyboard_reject(&session);
+	if (result != CHIAKI_ERR_SUCCESS)
+		return false;
+	CloseConsoleKeyboard();
+	return true;
 }
 
 void StreamSession::GoToBed()
@@ -2421,6 +2446,7 @@ void StreamSession::Event(ChiakiEvent *event)
 				}
 				connect_timer.invalidate();
 				connected = false;
+				CloseConsoleKeyboard();
 				emit ConnectedChanged();
 				emit SessionQuit(stop_requested ? CHIAKI_QUIT_REASON_STOPPED : reason, reason_str);
 			}, Qt::QueuedConnection);
@@ -2428,6 +2454,22 @@ void StreamSession::Event(ChiakiEvent *event)
 		}
 		case CHIAKI_EVENT_REGIST:
 			emit AutoRegistSucceeded(event->host);
+			break;
+		case CHIAKI_EVENT_KEYBOARD_OPEN:
+		case CHIAKI_EVENT_KEYBOARD_TEXT_CHANGE: {
+			const bool opening = event->type == CHIAKI_EVENT_KEYBOARD_OPEN;
+			const QString text = QString::fromUtf8(event->keyboard.text_str);
+			QMetaObject::invokeMethod(this, [this, opening, text]() {
+				if (!console_keyboard_enabled || stop_requested || !session_started || (!opening && !console_keyboard_open))
+					return;
+				console_keyboard_open = true;
+				console_keyboard_text = text;
+				emit ConsoleKeyboardChanged();
+			}, Qt::QueuedConnection);
+			break;
+		}
+		case CHIAKI_EVENT_KEYBOARD_REMOTE_CLOSE:
+			QMetaObject::invokeMethod(this, [this]() { CloseConsoleKeyboard(); }, Qt::QueuedConnection);
 			break;
 		case CHIAKI_EVENT_LOGIN_PIN_REQUEST:
 			emit LoginPINRequested(event->login_pin_request.pin_incorrect);

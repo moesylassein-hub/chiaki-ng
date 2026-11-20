@@ -30,6 +30,11 @@ Item {
     property bool sessionStopDialogActive: false
     property bool sessionPinDialogActive: false
 
+    ConsoleKeyboardWindow {
+        session: Chiaki.session
+        streamWindow: Chiaki.window
+    }
+
     function grabInput(item) {
         Chiaki.window.grabInput();
         restoreFocusItems.push(hostWindow ? hostWindow.activeFocusItem : null);
@@ -198,7 +203,7 @@ Item {
                     bottom: spinner.top
                     horizontalCenter: spinner.horizontalCenter
                 }
-                text: (Chiaki.settings.audioVideoDisabled & 0x01) ? qsTr("Audio and Video Disabled") : qsTr("Video Disabled")
+                text: (Chiaki.settings.audioVideoDisabled & 0x01) ? qsTr("Gamepad only") : qsTr("Audio only")
                 font.pixelSize: 24
                 visible: !sessionLoading && !sessionError && (Chiaki.settings.audioVideoDisabled & 0x02)
             }
@@ -212,7 +217,9 @@ Item {
                 }
                 horizontalAlignment: Text.AlignHCenter
                 font.pixelSize: 20
-                text: (Chiaki.settings.audioVideoDisabled & 0x01) ? qsTr("You have disabled audio and video in your settings.\nTo re-enable change Audio/Video to Audio and Video Enabled in the General tab of the settings.") : qsTr("You have disabled video in your settings.\nTo re-enable change Audio/Video to Audio and Video Enabled in the General tab of the settings.")
+                width: parent.width - 32
+                wrapMode: Text.WordWrap
+                text: qsTr("Press %1 to open the session menu.").arg(Chiaki.controllers.length ? Chiaki.settings.stringForStreamMenuShortcut() : "Ctrl+O")
                 visible: !sessionLoading && !sessionError && (Chiaki.settings.audioVideoDisabled & 0x02)
             }
 

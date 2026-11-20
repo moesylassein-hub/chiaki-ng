@@ -177,7 +177,7 @@ static void MigrateLegacyFrameMixerSetting(QSettings *settings, QSettings *place
 	apply_frame_mixer(*settings);
 	if (profiles) {
 		for (const QString &profile : *profiles) {
-			QSettings profile_settings(QCoreApplication::organizationName(),
+			QSettings profile_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(),
 			                           QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
 			apply_frame_mixer(profile_settings);
 		}
@@ -264,9 +264,9 @@ static void MigrateControllerMappings(QSettings *settings)
 
 Settings::Settings(const QString &conf, QObject *parent) : QObject(parent),
 	time_format("yyyy-MM-dd HH:mm:ss t"),
-	settings(QCoreApplication::organizationName(), conf.isEmpty() ? QCoreApplication::applicationName() : QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), conf)),
-	default_settings(QCoreApplication::organizationName(), QCoreApplication::applicationName()),
-	placebo_settings(QCoreApplication::organizationName(), QStringLiteral("pl_render_params"))
+	settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), conf.isEmpty() ? QCoreApplication::applicationName() : QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), conf)),
+	default_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QCoreApplication::applicationName()),
+	placebo_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QStringLiteral("pl_render_params"))
 {
 	settings.setFallbacksEnabled(false);
 	MigrateSettings(&settings);
@@ -304,6 +304,9 @@ void Settings::ExportSettings(QString filepath)
 	SaveManualHosts(&settings_backup);
 	SaveControllerMappings(&settings_backup);
     QStringList keys = settings.allKeys();
+    // Imported profiles must never install executable shader code implicitly.
+    keys.removeAll("local_video_shader");
+    settings_backup.remove("local_video_shader");
     for( QStringList::iterator i = keys.begin(); i != keys.end(); i++ )
     {
         settings_backup.setValue( *i, settings.value( *i ) );
@@ -362,6 +365,7 @@ void Settings::ImportSettings(QString filepath)
 		SaveManualHosts();
 		SaveControllerMappings();
 		QStringList keys = settings_backup.allKeys();
+		keys.removeAll("local_video_shader");
 		for( QStringList::iterator i = keys.begin(); i != keys.end(); i++ )
 		{
 			settings.setValue( *i, settings_backup.value( *i ) );
@@ -371,13 +375,14 @@ void Settings::ImportSettings(QString filepath)
 	}
 	else
 	{
-		QSettings profile_settings(QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
+		QSettings profile_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
 		profile_settings.clear();
 		SaveRegisteredHosts(&profile_settings);
 		SaveHiddenHosts(&profile_settings);
 		SaveManualHosts(&profile_settings);
 		SaveControllerMappings(&profile_settings);
 		QStringList keys = settings_backup.allKeys();
+		keys.removeAll("local_video_shader");
 		for( QStringList::iterator i = keys.begin(); i != keys.end(); i++ )
 		{
 			profile_settings.setValue( *i, settings_backup.value( *i ) );
@@ -995,6 +1000,16 @@ void Settings::SetCurrentProfile(QString profile)
 	emit CurrentProfileChanged();
 }
 
+bool Settings::GetConsoleTextEntry() const
+{
+	return settings.value("settings/console_text_entry", false).toBool();
+}
+
+void Settings::SetConsoleTextEntry(bool enabled)
+{
+	settings.setValue("settings/console_text_entry", enabled);
+}
+
 bool Settings::GetKeyboardEnabled() const
 {
 	return settings.value("settings/keyboard_enabled", true).toBool();
@@ -1209,6 +1224,79 @@ int Settings::GetDisplayTargetPeak() const
 void Settings::SetDisplayTargetPeak(int peak)
 {
 	settings.setValue("settings/display_target_peak", peak);
+}
+
+int Settings::GetHomeBackground() const
+{
+    return qBound(0, settings.value("settings/home_background", 1).toInt(), 2);
+}
+
+void Settings::SetHomeBackground(int value)
+{
+    settings.setValue("settings/home_background", qBound(0, value, 2));
+}
+
+bool Settings::GetHideLinkTile() const
+{
+    return settings.value("settings/hide_link_tile", false).toBool();
+}
+
+void Settings::SetHideLinkTile(bool value)
+{
+    settings.setValue("settings/hide_link_tile", value);
+}
+
+bool Settings::GetShowGameShelf() const
+{
+    return settings.value("settings/show_game_shelf", true).toBool();
+}
+
+void Settings::SetShowGameShelf(bool value)
+{
+    settings.setValue("settings/show_game_shelf", value);
+}
+
+bool Settings::GetShowWakeAction() const
+{
+    return settings.value("settings/show_wake_action", true).toBool();
+}
+
+void Settings::SetShowWakeAction(bool value)
+{
+    settings.setValue("settings/show_wake_action", value);
+}
+
+bool Settings::GetMotionInterpolation() const
+{
+	return settings.value("settings/motion_interpolation", false).toBool();
+}
+
+void Settings::SetMotionInterpolation(bool enabled)
+{
+	settings.setValue("settings/motion_interpolation", enabled);
+}
+
+bool Settings::GetAmbientBorder() const
+{
+	return settings.value("settings/ambient_border", false).toBool();
+}
+
+void Settings::SetAmbientBorder(bool enabled)
+{
+	settings.setValue("settings/ambient_border", enabled);
+}
+
+QVariantMap Settings::GetLocalVideoShader() const
+{
+	return settings.value("local_video_shader").toMap();
+}
+
+void Settings::SetLocalVideoShader(const QVariantMap &shader)
+{
+	if(shader.isEmpty())
+		settings.remove("local_video_shader");
+	else
+		settings.setValue("local_video_shader", shader);
 }
 
 int Settings::GetDisplayTargetTrc() const
@@ -2153,7 +2241,7 @@ void Settings::SaveProfiles()
 
 void Settings::DeleteProfile(QString profile)
 {
-	QSettings delete_profile(QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
+	QSettings delete_profile(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
 	registered_hosts.clear();
 	manual_hosts.clear();
 	controller_mappings.clear();
@@ -2216,10 +2304,35 @@ void Settings::AddRegisteredHost(const RegisteredHost &host)
 	emit RegisteredHostsUpdated();
 }
 
+void Settings::SetRememberGames(bool enabled)
+{
+	settings.setValue("settings/remember_games", enabled);
+	if (!enabled)
+		settings.remove("recent_games");
+}
+
+QStringList Settings::RecentGames(const HostMAC &mac) const
+{
+	return settings.value("recent_games/" + mac.ToString()).toStringList();
+}
+
+void Settings::NoteRunningGame(const HostMAC &mac, const QString &title)
+{
+	if (title.isEmpty() || !GetRegisteredHostRegistered(mac))
+		return;
+	auto games = RecentGames(mac);
+	if (!games.isEmpty() && games.first() == title)
+		return;
+	games.removeAll(title);
+	games.prepend(title);
+	settings.setValue("recent_games/" + mac.ToString(), games.mid(0, 4));
+}
+
 void Settings::RemoveRegisteredHost(const HostMAC &mac)
 {
 	if(!registered_hosts.contains(mac))
 		return;
+	settings.remove("recent_games/" + mac.ToString());
 	registered_hosts.remove(mac);
 	SaveRegisteredHosts();
 	emit RegisteredHostsUpdated();

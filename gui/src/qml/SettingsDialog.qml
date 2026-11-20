@@ -15,6 +15,7 @@ DialogView {
         PS5
     }
     property int selectedConsole: SettingsDialog.Console.PS5
+    property alias section: bar.currentIndex
     property bool quitControllerMapping: true
     id: dialog
     title: qsTr("Settings")
@@ -566,6 +567,17 @@ DialogView {
 
                         Label {
                             Layout.alignment: Qt.AlignRight
+                            text: qsTr("Console text entry")
+                        }
+                        C.CheckBox {
+                            Layout.columnSpan: 2
+                            text: qsTr("Type with this keyboard when the console opens a text field")
+                            checked: Chiaki.settings.consoleTextEntry
+                            onToggled: Chiaki.settings.consoleTextEntry = checked
+                        }
+
+                        Label {
+                            Layout.alignment: Qt.AlignRight
                             text: qsTr("Log Directory:")
                         }
 
@@ -590,6 +602,32 @@ DialogView {
                         }
                         Label {
 
+                        }
+                        Label { Layout.alignment: Qt.AlignRight; text: qsTr("Home background") }
+                        C.ComboBox {
+                            Layout.columnSpan: 2
+                            model: [qsTr("Animated waves"), qsTr("Static waves"), qsTr("Plain")]
+                            currentIndex: Chiaki.settings.homeBackground
+                            onActivated: i => Chiaki.settings.homeBackground = i
+                        }
+                        Label { Layout.alignment: Qt.AlignRight; text: qsTr("Home screen") }
+                        C.CheckBox { Layout.columnSpan: 2; text: qsTr("Show recently played games from PSN"); checked: Chiaki.settings.showGameShelf; onToggled: Chiaki.settings.showGameShelf = checked }
+                        Item {}
+                        C.CheckBox { Layout.columnSpan: 2; text: qsTr("Hide the Link Console tile after pairing"); checked: Chiaki.settings.hideLinkTile; onToggled: Chiaki.settings.hideLinkTile = checked }
+                        Item {}
+                        C.CheckBox { Layout.columnSpan: 2; text: qsTr("Show the wake button on consoles"); checked: Chiaki.settings.showWakeAction; onToggled: Chiaki.settings.showWakeAction = checked }
+
+                        Label {
+                            Layout.alignment: Qt.AlignRight
+                            text: qsTr("Recent games")
+                        }
+                        C.CheckBox {
+                            Layout.columnSpan: 2
+                            text: qsTr("Remember the last four titles discovered on each registered console")
+                            checked: Chiaki.settings.rememberGames
+                            onToggled: Chiaki.settings.rememberGames = checked
+                            ToolTip.visible: hovered
+                            ToolTip.text: qsTr("Turning this off clears the history for this profile.")
                         }
                         Label {
                             Layout.alignment: Qt.AlignRight
@@ -1115,13 +1153,7 @@ DialogView {
                             else
                                 KeyNavigation.AfterItem
                         }
-                        KeyNavigation.down: {
-                            if(selectedConsole == SettingsDialog.Console.PS4)
-                                resolutionLocalPS4
-                            else
-                                resolutionLocalPS5
-
-                        }
+                        KeyNavigation.down: localPreset
 
                     }
 
@@ -1162,6 +1194,29 @@ DialogView {
 
                     Label {
                         Layout.alignment: Qt.AlignRight
+                        text: qsTr("Quick preset")
+                    }
+                    QualityPreset {
+                        id: localPreset
+                        config: Chiaki.settings
+                        scope: selectedConsole === SettingsDialog.Console.PS4 ? "LocalPS4" : "LocalPS5"
+                        Layout.fillWidth: true
+                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.right: remotePreset
+                        KeyNavigation.down: selectedConsole === SettingsDialog.Console.PS4 ? resolutionLocalPS4 : resolutionLocalPS5
+                    }
+                    QualityPreset {
+                        id: remotePreset
+                        config: Chiaki.settings
+                        scope: selectedConsole === SettingsDialog.Console.PS4 ? "RemotePS4" : "RemotePS5"
+                        Layout.fillWidth: true
+                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.left: localPreset
+                        KeyNavigation.down: selectedConsole === SettingsDialog.Console.PS4 ? resolutionRemotePS4 : resolutionRemotePS5
+                    }
+
+                    Label {
+                        Layout.alignment: Qt.AlignRight
                         text: qsTr("Resolution:")
                     }
 
@@ -1177,7 +1232,7 @@ DialogView {
                         visible: selectedConsole == SettingsDialog.Console.PS4
                         KeyNavigation.right: resolutionRemotePS4
                         KeyNavigation.down: fpsLocalPS4
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: localPreset
                         KeyNavigation.priority: {
                             if(!popup.visible)
                                 KeyNavigation.BeforeItem
@@ -1198,7 +1253,7 @@ DialogView {
                         visible: selectedConsole == SettingsDialog.Console.PS4
                         KeyNavigation.left: resolutionLocalPS4
                         KeyNavigation.down: fpsRemotePS4
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: remotePreset
                         KeyNavigation.priority: {
                             if(!popup.visible)
                                 KeyNavigation.BeforeItem
@@ -1218,7 +1273,7 @@ DialogView {
                         }
                         visible: selectedConsole == SettingsDialog.Console.PS5
                         KeyNavigation.right: resolutionRemotePS5
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: localPreset
                         KeyNavigation.down: fpsLocalPS5
                         KeyNavigation.priority: {
                             if(!popup.visible)
@@ -1239,7 +1294,7 @@ DialogView {
                         }
                         visible: selectedConsole == SettingsDialog.Console.PS5
                         KeyNavigation.left: resolutionLocalPS5
-                        KeyNavigation.up: consoleSelection
+                        KeyNavigation.up: remotePreset
                         KeyNavigation.down: fpsRemotePS5
                         KeyNavigation.priority: {
                             if(!popup.visible)

@@ -1057,9 +1057,12 @@ static void ctrl_message_received_keyboard_open(ChiakiCtrl *ctrl, uint8_t *paylo
 
 	CtrlKeyboardOpenMessage *msg = (CtrlKeyboardOpenMessage *)payload;
 	msg->text_length = ntohl(msg->text_length);
-	assert(payload_size == sizeof(CtrlKeyboardOpenMessage) + msg->text_length);
+	if (msg->text_length != payload_size - sizeof(CtrlKeyboardOpenMessage))
+		return;
 
 	uint8_t *buffer = msg->text_length > 0 ? malloc((size_t)msg->text_length + 1) : NULL;
+	if (msg->text_length && !buffer)
+		return;
 	if(buffer)
 	{
 		buffer[msg->text_length] = '\0';
@@ -1096,9 +1099,12 @@ static void ctrl_message_received_keyboard_text_change(ChiakiCtrl *ctrl, uint8_t
 
 	CtrlKeyboardTextResponseMessage *msg = (CtrlKeyboardTextResponseMessage *)payload;
 	msg->text_length1 = ntohl(msg->text_length1);
-	assert(payload_size == sizeof(CtrlKeyboardTextResponseMessage) + msg->text_length1);
+	if (msg->text_length1 != payload_size - sizeof(CtrlKeyboardTextResponseMessage))
+		return;
 
 	uint8_t *buffer = msg->text_length1 > 0 ? malloc((size_t)msg->text_length1 + 1) : NULL;
+	if (msg->text_length1 && !buffer)
+		return;
 	if(buffer)
 	{
 		buffer[msg->text_length1] = '\0';
