@@ -12,6 +12,8 @@ The session mode next to the connection tabs controls the next connection. **Gam
 
 **Display settings** is available from the home navigation menu and the stream overlay. Turn on **Ambient blur** to fill screen borders with a blurred copy of the current game while keeping its aspect ratio. Choose **Load shader** to apply an mpv-format GLSL hook alongside the selected upscaler. Shaders are saved per profile on this machine. **Remove** restores the stream preset.
 
+Enable **2× motion interpolation** in Display settings before connecting for 30-to-60 or 60-to-120 presentation on a sufficiently fast display. It estimates motion between adjacent decoded frames, adding processing and presentation latency. Scene cuts, missing frames, unsupported formats and overloaded CPUs fall back to real frames. This mode is off by default.
+
 For portable settings, start `chiaki.exe --settings-dir .\profiles` from the extracted folder. The app creates a separate configuration there, including console registrations. Keep that directory private.
 
 ## Windows feature coverage
@@ -22,6 +24,7 @@ For portable settings, start `chiaki.exe --settings-dir .\profiles` from the ext
 | Controller mapping, fullscreen, zoom, stretch, stream volume and a performance overlay | Available through the existing settings and stream menu. |
 | Keyboard for console text dialogs | Implemented through chiaki’s console keyboard protocol. Physical PS4 and PS5 verification is pending. |
 | Native keyboard gameplay, independent players in one session and launching a game directly through PSN | Open feature gaps. The games list displays titles observed on the network. |
-| Forced PS5 HDR with the TV off, a Direct3D 12 renderer and motion-estimated frame generation | Open feature gaps. The existing client offers its own HDR and frame-mixing settings. |
+| Motion-estimated frame generation | Implemented for 8-bit and 10-bit 4:2:0 streams. Actual timing depends on the CPU, decoder and display. |
+| Forced PS5 HDR with the TV off and a Direct3D 12 renderer | Open feature gaps. |
 
 The Windows reference is [PXPlay’s published desktop release notes](https://github.com/streamingdv/PSPlay-Application-Hosting/releases/tag/v3.2.0_v9.0.0).

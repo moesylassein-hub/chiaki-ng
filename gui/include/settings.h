@@ -362,7 +362,9 @@ class Settings : public QObject
 		int GetDisplayTargetPeak() const;
 		void SetDisplayTargetPeak(int peak);
 
-		bool GetAmbientBorder() const;
+		bool GetMotionInterpolation() const;
+	void SetMotionInterpolation(bool enabled);
+	bool GetAmbientBorder() const;
 	void SetAmbientBorder(bool enabled);
 	QVariantMap GetLocalVideoShader() const;
 	void SetLocalVideoShader(const QVariantMap &shader);

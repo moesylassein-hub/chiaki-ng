@@ -511,6 +511,17 @@ void QmlSettings::setDisplayTargetPrim(int prim)
     emit displayTargetPrimChanged();
 }
 
+bool QmlSettings::motionInterpolation() const
+{
+    return settings->GetMotionInterpolation();
+}
+
+void QmlSettings::setMotionInterpolation(bool enabled)
+{
+    settings->SetMotionInterpolation(enabled);
+    emit motionInterpolationChanged();
+}
+
 bool QmlSettings::ambientBorder() const
 {
     return settings->GetAmbientBorder();
@@ -1889,6 +1900,7 @@ void QmlSettings::setSettings(Settings *new_settings)
 
 void QmlSettings::refreshAllKeys()
 {
+    emit motionInterpolationChanged();
     emit ambientBorderChanged();
     emit remotePlayAskChanged();
     emit addSteamShortcutAskChanged();

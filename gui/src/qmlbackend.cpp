@@ -3,6 +3,8 @@
 #include "qmlmainwindow.h"
 #include "streamsession.h"
 #include "sessionresource.h"
+#include "frameinterpolator.h"
+#include <QScreen>
 #include <iterator>
 #include <memory>
 #include <QJsonDocument>
@@ -1025,7 +1027,10 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
     recovery_healthy_since_ms = 0;
     stream_health.reset(recovery_started_ms);
     session_info = connect_info;
-    window->setStreamMaxFPS(connect_info.video_profile.max_fps);
+    const auto source_fps = connect_info.video_profile.max_fps;
+    const bool interpolate = settings->GetMotionInterpolation() && source_fps > 0 &&
+        window->screen() && window->screen()->refreshRate() >= 1.95 * source_fps;
+    window->setStreamMaxFPS(interpolate ? 2 * source_fps : source_fps);
     disable_zero_copy = !settings->GetUseZeroCopy();
     {
         QMutexLocker locker(&hw_transfer_state_mutex);
@@ -1183,8 +1188,12 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
     connect(session, &StreamSession::FfmpegDecoderClosing, this, [frame_resource]() {
         frame_resource->Close();
     }, Qt::DirectConnection);
+    auto interpolator = interpolate ? std::make_shared<FrameInterpolator>() : nullptr;
+    // This sequence is only touched on the GUI thread. A newer source frame supersedes a late timer.
+    auto presentation_sequence = std::make_shared<quint64>(0);
     connect(session, &StreamSession::FfmpegFrameAvailable, frame_thread->parent(),
-            [this, use_opengl_renderer, frame_resource, session_for_connections]() {
+            [this, use_opengl_renderer, frame_resource, session_for_connections, interpolator,
+             presentation_sequence, retry_interpolation_us = qint64(0)]() mutable {
         frame_resource->Use([&](ChiakiFfmpegDecoder *decoder) {
             int32_t frames_lost;
             ChiakiFfmpegFrame frame = chiaki_ffmpeg_decoder_pull_frame(decoder, &frames_lost);
@@ -1212,19 +1221,51 @@ void QmlBackend::createSession(const StreamSessionConnectInfo &connect_info)
                 frame.recovered = true;
             }
 
+            const auto own = [](AVFrame *ptr) {
+                return std::shared_ptr<AVFrame>(ptr, [](AVFrame *f) { av_frame_free(&f); });
+            };
+            std::shared_ptr<AVFrame> midpoint;
+            double half_interval = 0.0;
+            if (interpolator && prepare_end_us >= retry_interpolation_us) {
+                half_interval = (frame.pts - interpolator->previousPts()) * 0.5;
+                midpoint = own(interpolator->push(frame.frame, frame.pts, frame.duration, frame.recovered || frames_lost > 0));
+                const auto elapsed = static_cast<qint64>(chiaki_time_now_monotonic_us()) - prepare_end_us;
+                if (frame.duration > 0 && elapsed > frame.duration * 800000.0) {
+                    // Give slow devices a breather and keep delivering real frames under load.
+                    midpoint.reset();
+                    retry_interpolation_us = prepare_end_us + 2000000;
+                }
+            }
             const qint64 delivery_us = static_cast<qint64>(chiaki_time_now_monotonic_us());
             QmlMainWindow *target_window = window;
             // Own queued frames even if the receiver is destroyed before delivery.
-            auto owned_frame = std::shared_ptr<AVFrame>(frame.frame, [](AVFrame *f) { av_frame_free(&f); });
+            auto owned_frame = own(frame.frame);
             QMetaObject::invokeMethod(this, [this, target_window, frame, owned_frame, frame_resource,
-                                          session_for_connections, frames_lost, delivery_us]() mutable {
+                                          session_for_connections, frames_lost, delivery_us, midpoint,
+                                          half_interval, presentation_sequence]() mutable {
                 if (session != session_for_connections || !frame_resource->IsOpen())
                     return;
                 recovery_last_frame_ms = chiaki_time_now_monotonic_us() / 1000;
-                // presentFrame takes ownership; the queued event keeps its own reference.
-                frame.frame = av_frame_clone(owned_frame.get());
-                if (frame.frame)
-                    target_window->presentFrame(frame, frames_lost, delivery_us);
+                const quint64 seq = ++*presentation_sequence;
+                auto present_source = [this, target_window, session_for_connections, frame_resource, frame, owned_frame,
+                                       frames_lost, delivery_us, presentation_sequence, seq]() mutable {
+                    if (session != session_for_connections || !frame_resource->IsOpen() || *presentation_sequence != seq)
+                        return;
+                    frame.frame = av_frame_clone(owned_frame.get());
+                    if (frame.frame)
+                        target_window->presentFrame(frame, frames_lost, delivery_us);
+                };
+                const auto age = static_cast<qint64>(chiaki_time_now_monotonic_us()) - delivery_us;
+                const int delay = midpoint ? qRound(half_interval * 1000.0) : 0;
+                if (midpoint && delay > 0 && age < delay * 1000) {
+                    ChiakiFfmpegFrame generated{av_frame_clone(midpoint.get()), frame.pts - half_interval, half_interval, false};
+                    if (generated.frame) {
+                        target_window->presentFrame(generated, 0, delivery_us);
+                        QTimer::singleShot(delay, Qt::PreciseTimer, this, std::move(present_source));
+                        return;
+                    }
+                }
+                present_source();
             });
         });
     });

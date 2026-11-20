@@ -1226,6 +1226,16 @@ void Settings::SetDisplayTargetPeak(int peak)
 	settings.setValue("settings/display_target_peak", peak);
 }
 
+bool Settings::GetMotionInterpolation() const
+{
+	return settings.value("settings/motion_interpolation", false).toBool();
+}
+
+void Settings::SetMotionInterpolation(bool enabled)
+{
+	settings.setValue("settings/motion_interpolation", enabled);
+}
+
 bool Settings::GetAmbientBorder() const
 {
 	return settings.value("settings/ambient_border", false).toBool();

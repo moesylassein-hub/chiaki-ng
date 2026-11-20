@@ -36,6 +36,19 @@ DialogView {
 
             Label {
                 Layout.alignment: Qt.AlignRight
+                text: qsTr("Frame generation")
+            }
+            Switch {
+                text: qsTr("2× motion interpolation")
+                checked: Chiaki.settings.motionInterpolation
+                onToggled: Chiaki.settings.motionInterpolation = checked
+                ToolTip.visible: hovered
+                ToolTip.text: qsTr("Applies on the next connection. Generates intermediate frames when the display can show double the stream rate. Adds latency and CPU load.")
+            }
+            Label { text: qsTr("Next session") }
+
+            Label {
+                Layout.alignment: Qt.AlignRight
                 text: qsTr("Screen borders")
             }
             Switch {

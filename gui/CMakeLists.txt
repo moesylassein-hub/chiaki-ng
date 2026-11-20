@@ -24,6 +24,8 @@ set(SOURCE_FILES
 	src/main.cpp
 	include/discoverymanager.h
 	src/discoverymanager.cpp
+	include/frameinterpolator.h
+	src/frameinterpolator.cpp
 	include/streamsession.h
 	src/streamsession.cpp
 	include/sessionlog.h

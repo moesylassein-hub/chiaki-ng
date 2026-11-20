@@ -39,6 +39,7 @@ class QmlSettings : public QObject
     Q_PROPERTY(int displayTargetContrast READ displayTargetContrast WRITE setDisplayTargetContrast NOTIFY displayTargetContrastChanged)
     Q_PROPERTY(int displayTargetPeak READ displayTargetPeak WRITE setDisplayTargetPeak NOTIFY displayTargetPeakChanged)
     Q_PROPERTY(int displayTargetPrim READ displayTargetPrim WRITE setDisplayTargetPrim NOTIFY displayTargetPrimChanged)
+    Q_PROPERTY(bool motionInterpolation READ motionInterpolation WRITE setMotionInterpolation NOTIFY motionInterpolationChanged)
     Q_PROPERTY(bool ambientBorder READ ambientBorder WRITE setAmbientBorder NOTIFY ambientBorderChanged)
     Q_PROPERTY(int displayTargetTrc READ displayTargetTrc WRITE setDisplayTargetTrc NOTIFY displayTargetTrcChanged)
     Q_PROPERTY(bool fullscreenDoubleClick READ fullscreenDoubleClick WRITE setFullscreenDoubleClick NOTIFY fullscreenDoubleClickChanged)
@@ -204,6 +205,8 @@ public:
     int displayTargetPrim() const;
     void setDisplayTargetPrim(int prim);
 
+    bool motionInterpolation() const;
+    void setMotionInterpolation(bool enabled);
     bool ambientBorder() const;
     void setAmbientBorder(bool enabled);
     int displayTargetTrc() const;
@@ -677,6 +680,7 @@ signals:
     void displayTargetPeakChanged();
     void displayTargetContrastChanged();
     void displayTargetPrimChanged();
+    void motionInterpolationChanged();
     void ambientBorderChanged();
     void displayTargetTrcChanged();
     void audioBufferSizeChanged();
