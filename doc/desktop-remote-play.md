@@ -16,6 +16,8 @@ Enable **2× motion interpolation** in Display settings before connecting for 30
 
 For portable settings, start `chiaki.exe --settings-dir .\profiles` from the extracted folder. The app creates a separate configuration there, including console registrations. Keep that directory private.
 
+The home screen includes a **Recently played on PlayStation** shelf. Select **Load games** to request the last twelve PS4/PS5 titles from the signed-in account. Select a cover for its platform and last-played date. The shelf is hidden in streamer mode and cleared on profile or sign-in changes. The local console history is independent.
+
 ## Windows feature coverage
 
 | Capability | Status in this fork |
@@ -23,7 +25,7 @@ For portable settings, start `chiaki.exe --settings-dir .\profiles` from the ext
 | LAN discovery, wake, address-based connections and PSN connections | Implemented. Both connection views use stable identifiers during discovery refreshes. |
 | Controller mapping, fullscreen, zoom, stretch, stream volume and a performance overlay | Available through the existing settings and stream menu. |
 | Keyboard for console text dialogs | Implemented through chiaki’s console keyboard protocol. Physical PS4 and PS5 verification is pending. |
-| Native keyboard gameplay, independent players in one session and launching a game directly through PSN | Open feature gaps. The games list displays titles observed on the network. |
+| Native keyboard gameplay, independent players in one session and launching a game directly through PSN | Open feature gaps. The account game shelf shows history and game details. |
 | Motion-estimated frame generation | Implemented for 8-bit and 10-bit 4:2:0 streams. Actual timing depends on the CPU, decoder and display. |
 | Forced PS5 HDR with the TV off and a Direct3D 12 renderer | Open feature gaps. |
 

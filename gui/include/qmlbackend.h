@@ -1,6 +1,7 @@
 #pragma once
 
 #include "streamhealth.h"
+#include "psngamelibrary.h"
 #include <QJsonArray>
 #include "streamsession.h"
 #include "discoverymanager.h"
@@ -80,6 +81,7 @@ private:
 class QmlBackend : public QObject
 {
     Q_OBJECT
+    Q_PROPERTY(PsnGameLibrary* gameLibrary READ gameLibrary CONSTANT)
     Q_PROPERTY(QString recoveryStatus READ recoveryStatus NOTIFY recoveryChanged)
     Q_PROPERTY(bool recoveryActive READ recoveryActive NOTIFY recoveryChanged)
     Q_PROPERTY(QmlMainWindow* window READ qmlWindow CONSTANT)
@@ -119,6 +121,8 @@ public:
     ~QmlBackend();
 
     QmlMainWindow *qmlWindow() const;
+    PsnGameLibrary *gameLibrary() const { return game_library; }
+    Q_INVOKABLE void refreshRecentGames();
     QmlSettings *qmlSettings() const;
     StreamSession *qmlSession() const;
     QList<QmlController*> qmlControllers() const;
@@ -297,6 +301,7 @@ private:
     void updateStreamShortcut();
     QString getExecutable();
 
+    PsnGameLibrary *game_library = nullptr;
     Settings *settings = {};
     QmlSettings *settings_qml = {};
     QmlMainWindow *window = {};

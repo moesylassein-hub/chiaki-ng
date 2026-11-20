@@ -238,16 +238,38 @@ Pane {
         }
     }
 
+    RowLayout {
+        id: consoleHeading
+        anchors.top: connectionBar.bottom
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.margins: 16
+        anchors.leftMargin: 24
+        anchors.rightMargin: 24
+        Label {
+            Layout.fillWidth: true
+            text: root.remoteHome ? qsTr("Remote consoles") : qsTr("Your consoles")
+            font.pixelSize: 18
+            font.weight: Font.DemiBold
+            color: "white"
+        }
+        Button {
+            text: qsTr("Link console")
+            flat: true
+            onClicked: root.showRegistDialog("255.255.255.255", true)
+        }
+    }
+
     ListView {
         id: hostsView
         anchors {
-            top: connectionBar.bottom
+            top: consoleHeading.bottom
             left: parent.left
             right: parent.right
-            bottom: recentGames.visible ? recentGames.top : footer.top
+            bottom: activityHome.visible ? activityHome.top : footer.top
             margins: 24
-            topMargin: 20
-            bottomMargin: 16
+            topMargin: 4
+            bottomMargin: 8
         }
         spacing: 14
         clip: true
@@ -460,25 +482,46 @@ Pane {
     }
 
     ColumnLayout {
-        id: recentGames
+        id: activityHome
         readonly property var selectedHost: consolePane.routes[hostsView.currentIndex]
-        readonly property var titles: selectedHost && selectedHost.recentGames ? selectedHost.recentGames : []
-        visible: titles.length > 0 && !Chiaki.settings.streamerMode
+        readonly property var titles: selectedHost?.recentGames || []
+        visible: !Chiaki.settings.streamerMode && consolePane.height >= 420
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.bottom: footer.top
-        anchors.margins: 20
-        spacing: 4
+        anchors.leftMargin: 24
+        anchors.rightMargin: 24
+        anchors.bottomMargin: 6
+        spacing: 2
         Label {
-            text: qsTr("Recent games on %1").arg(recentGames.selectedHost ? recentGames.selectedHost.name : "")
-            font.weight: Font.DemiBold
-        }
-        Label {
+            visible: activityHome.titles.length > 0 && consolePane.height > 540
             Layout.fillWidth: true
-            text: recentGames.titles.join("  ·  ")
+            text: qsTr("On %1: %2").arg(activityHome.selectedHost?.name || "").arg(activityHome.titles.join("  ·  "))
             textFormat: Text.PlainText
             elide: Text.ElideRight
             color: consolePane.secondaryTextColor
+        }
+        GameShelf {
+            Layout.fillWidth: true
+            compact: consolePane.width < 650 || consolePane.height < 620
+            games: Chiaki.gameLibrary.games
+            loading: Chiaki.gameLibrary.state === PsnGameLibrary.Loading
+            readonly property bool signIn: !Chiaki.settings.psnAuthToken || Chiaki.gameLibrary.state === PsnGameLibrary.SignInRequired
+            actionText: signIn ? qsTr("Sign in to PSN") : games.length ? qsTr("Refresh games") : qsTr("Load games")
+            message: {
+                switch (Chiaki.gameLibrary.state) {
+                case PsnGameLibrary.SignInRequired: return qsTr("Your PSN session has expired. Sign in to see your games.")
+                case PsnGameLibrary.Forbidden: return qsTr("PlayStation declined access to game history for this account.")
+                case PsnGameLibrary.RateLimited: return qsTr("PlayStation is limiting requests. Try again later.")
+                case PsnGameLibrary.Unavailable: return qsTr("Game history is unavailable. Try again when connected.")
+                case PsnGameLibrary.Ready: return games.length ? "" : qsTr("No recently played PS4 or PS5 games were returned.")
+                default: return ""
+                }
+            }
+            onRequested: {
+                if (signIn) root.showPSNTokenDialog(false, Chiaki.gameLibrary.state === PsnGameLibrary.SignInRequired)
+                else Chiaki.refreshRecentGames()
+            }
         }
     }
 

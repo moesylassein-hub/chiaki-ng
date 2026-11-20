@@ -297,6 +297,11 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     , settings_qml(new QmlSettings(settings, this))
     , window(window)
 {
+    game_library = new PsnGameLibrary(this);
+    connect(settings_qml, &QmlSettings::streamerModeChanged, game_library, &PsnGameLibrary::clear);
+    connect(settings_qml, &QmlSettings::psnAccountIdChanged, game_library, &PsnGameLibrary::clear);
+    connect(settings_qml, &QmlSettings::psnAuthTokenChanged, game_library, &PsnGameLibrary::clear);
+    connect(this, &QmlBackend::psnCredsExpired, game_library, &PsnGameLibrary::clear);
     health_timer.setInterval(1000);
     connect(&health_timer, &QTimer::timeout, this, &QmlBackend::monitorStreamHealth);
     health_timer.start();
@@ -318,6 +323,7 @@ QmlBackend::QmlBackend(Settings *settings, QmlMainWindow *window)
     qt_msg_handler = qInstallMessageHandler(msg_handler);
 
     const char *uri = "org.streetpea.chiaking";
+    qmlRegisterUncreatableType<PsnGameLibrary>(uri, 1, 0, "PsnGameLibrary", {});
     qmlRegisterSingletonInstance(uri, 1, 0, "Chiaki", this);
     qmlRegisterUncreatableType<QmlMainWindow>(uri, 1, 0, "ChiakiWindow", {});
     qmlRegisterUncreatableType<QmlSettings>(uri, 1, 0, "ChiakiSettings", {});
@@ -627,6 +633,7 @@ QList<QmlController*> QmlBackend::qmlControllers() const
 
 void QmlBackend::profileChanged()
 {
+    game_library->clear();
     cancelRecovery();
     settings->EndVideoTrial();
     QString profile = settings->GetCurrentProfile();
@@ -2712,6 +2719,15 @@ void QmlBackend::initPsnAuth(const QUrl &url, const QJSValue &callback)
     connect(psnId, &PSNAccountID::Finished, psnId, &QObject::deleteLater);
     psnId->GetPsnAccountId(code);
     emit psnTokenChanged();
+}
+
+void QmlBackend::refreshRecentGames()
+{
+    if (settings->GetStreamerMode()) {
+        game_library->clear();
+        return;
+    }
+    game_library->refresh(settings->GetPsnAuthToken());
 }
 
 void QmlBackend::refreshAuth()

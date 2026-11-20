@@ -4,6 +4,7 @@
     <file>Main.qml</file>
     <file>MainView.qml</file>
     <file>ConnectionCard.qml</file>
+    <file>GameShelf.qml</file>
     <file>ConnectionRoutes.js</file>
     <file>StreamView.qml</file>
     <file>ConsoleKeyboardWindow.qml</file>

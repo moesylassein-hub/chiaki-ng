@@ -67,6 +67,22 @@ TestCase {
         compare(card.Accessible.description, "Over the internet")
     }
 
+    Component {
+        id: shelfComponent
+        Desktop.GameShelf { games: []; actionText: "Load games"; message: "" }
+    }
+    function test_shelfWithAndWithoutHistory() {
+        const shelf = createTemporaryObject(shelfComponent, tests, {width: 600})
+        verify(shelf !== null)
+        const cards = findChild(shelf, "gameCards")
+        compare(cards.count, 0)
+        shelf.games = [{title: "A & B", platform: "PS5", image: "", lastPlayed: null}]
+        tryCompare(cards, "count", 1)
+        shelf.compact = true
+        shelf.games = []
+        tryCompare(cards, "count", 0)
+    }
+
     function test_connectionRoutes() {
         const hosts = [
             {routeId: "lan", display: true, discovered: true, duid: "registration"},

@@ -72,6 +72,12 @@ jobs:
           cat desktop-tests.txt
           exit "$result"
 
+      - name: Test account game history with an offline transport
+        run: |
+          "$(qtpaths6 --query QT_INSTALL_LIBEXECS)/moc" gui/include/psngamelibrary.h -o moc_psngamelibrary.cpp
+          g++ -std=c++17 -Igui/include test/desktop-play/psn-games.cpp gui/src/psngamelibrary.cpp moc_psngamelibrary.cpp $(pkg-config --cflags --libs Qt6Core Qt6Network) -o psn-games-test.exe
+          ./psn-games-test.exe
+
       - name: Build libplacebo
         run: |
           scripts/build-libplacebo-windows.sh
