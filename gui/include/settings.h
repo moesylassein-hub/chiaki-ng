@@ -362,7 +362,11 @@ class Settings : public QObject
 		int GetDisplayTargetPeak() const;
 		void SetDisplayTargetPeak(int peak);
 
-		int GetDisplayTargetTrc() const;
+		bool GetAmbientBorder() const;
+	void SetAmbientBorder(bool enabled);
+	QVariantMap GetLocalVideoShader() const;
+	void SetLocalVideoShader(const QVariantMap &shader);
+	int GetDisplayTargetTrc() const;
 		void SetDisplayTargetTrc(int trc);
 
 		int GetDisplayTargetPrim() const;

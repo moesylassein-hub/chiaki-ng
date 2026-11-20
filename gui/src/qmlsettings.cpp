@@ -511,6 +511,17 @@ void QmlSettings::setDisplayTargetPrim(int prim)
     emit displayTargetPrimChanged();
 }
 
+bool QmlSettings::ambientBorder() const
+{
+    return settings->GetAmbientBorder();
+}
+
+void QmlSettings::setAmbientBorder(bool enabled)
+{
+    settings->SetAmbientBorder(enabled);
+    emit ambientBorderChanged();
+}
+
 int QmlSettings::displayTargetTrc() const
 {
     return settings->GetDisplayTargetTrc();
@@ -1878,6 +1889,7 @@ void QmlSettings::setSettings(Settings *new_settings)
 
 void QmlSettings::refreshAllKeys()
 {
+    emit ambientBorderChanged();
     emit remotePlayAskChanged();
     emit addSteamShortcutAskChanged();
     emit hideCursorChanged();

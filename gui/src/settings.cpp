@@ -177,7 +177,7 @@ static void MigrateLegacyFrameMixerSetting(QSettings *settings, QSettings *place
 	apply_frame_mixer(*settings);
 	if (profiles) {
 		for (const QString &profile : *profiles) {
-			QSettings profile_settings(QCoreApplication::organizationName(),
+			QSettings profile_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(),
 			                           QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
 			apply_frame_mixer(profile_settings);
 		}
@@ -264,9 +264,9 @@ static void MigrateControllerMappings(QSettings *settings)
 
 Settings::Settings(const QString &conf, QObject *parent) : QObject(parent),
 	time_format("yyyy-MM-dd HH:mm:ss t"),
-	settings(QCoreApplication::organizationName(), conf.isEmpty() ? QCoreApplication::applicationName() : QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), conf)),
-	default_settings(QCoreApplication::organizationName(), QCoreApplication::applicationName()),
-	placebo_settings(QCoreApplication::organizationName(), QStringLiteral("pl_render_params"))
+	settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), conf.isEmpty() ? QCoreApplication::applicationName() : QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), conf)),
+	default_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QCoreApplication::applicationName()),
+	placebo_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QStringLiteral("pl_render_params"))
 {
 	settings.setFallbacksEnabled(false);
 	MigrateSettings(&settings);
@@ -304,6 +304,9 @@ void Settings::ExportSettings(QString filepath)
 	SaveManualHosts(&settings_backup);
 	SaveControllerMappings(&settings_backup);
     QStringList keys = settings.allKeys();
+    // Imported profiles must never install executable shader code implicitly.
+    keys.removeAll("local_video_shader");
+    settings_backup.remove("local_video_shader");
     for( QStringList::iterator i = keys.begin(); i != keys.end(); i++ )
     {
         settings_backup.setValue( *i, settings.value( *i ) );
@@ -362,6 +365,7 @@ void Settings::ImportSettings(QString filepath)
 		SaveManualHosts();
 		SaveControllerMappings();
 		QStringList keys = settings_backup.allKeys();
+		keys.removeAll("local_video_shader");
 		for( QStringList::iterator i = keys.begin(); i != keys.end(); i++ )
 		{
 			settings.setValue( *i, settings_backup.value( *i ) );
@@ -371,13 +375,14 @@ void Settings::ImportSettings(QString filepath)
 	}
 	else
 	{
-		QSettings profile_settings(QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
+		QSettings profile_settings(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
 		profile_settings.clear();
 		SaveRegisteredHosts(&profile_settings);
 		SaveHiddenHosts(&profile_settings);
 		SaveManualHosts(&profile_settings);
 		SaveControllerMappings(&profile_settings);
 		QStringList keys = settings_backup.allKeys();
+		keys.removeAll("local_video_shader");
 		for( QStringList::iterator i = keys.begin(); i != keys.end(); i++ )
 		{
 			profile_settings.setValue( *i, settings_backup.value( *i ) );
@@ -1219,6 +1224,29 @@ int Settings::GetDisplayTargetPeak() const
 void Settings::SetDisplayTargetPeak(int peak)
 {
 	settings.setValue("settings/display_target_peak", peak);
+}
+
+bool Settings::GetAmbientBorder() const
+{
+	return settings.value("settings/ambient_border", false).toBool();
+}
+
+void Settings::SetAmbientBorder(bool enabled)
+{
+	settings.setValue("settings/ambient_border", enabled);
+}
+
+QVariantMap Settings::GetLocalVideoShader() const
+{
+	return settings.value("local_video_shader").toMap();
+}
+
+void Settings::SetLocalVideoShader(const QVariantMap &shader)
+{
+	if(shader.isEmpty())
+		settings.remove("local_video_shader");
+	else
+		settings.setValue("local_video_shader", shader);
 }
 
 int Settings::GetDisplayTargetTrc() const
@@ -2163,7 +2191,7 @@ void Settings::SaveProfiles()
 
 void Settings::DeleteProfile(QString profile)
 {
-	QSettings delete_profile(QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
+	QSettings delete_profile(QSettings::defaultFormat(), QSettings::UserScope, QCoreApplication::organizationName(), QStringLiteral("%1-%2").arg(QCoreApplication::applicationName(), profile));
 	registered_hosts.clear();
 	manual_hosts.clear();
 	controller_mappings.clear();

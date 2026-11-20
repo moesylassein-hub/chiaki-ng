@@ -77,7 +77,7 @@ Pane {
     Keys.onDownPressed: moveSelection(1)
     Keys.onLeftPressed: root.remoteHome = false
     Keys.onRightPressed: root.remoteHome = true
-    Keys.onMenuPressed: settingsButton.clicked()
+    Keys.onMenuPressed: navigation.open()
     Keys.onReturnPressed: {
         if (hostsView.currentItem)
             hostsView.currentItem.connectToHost()
@@ -123,7 +123,7 @@ Pane {
             left: parent.left
             right: parent.right
         }
-        height: 104
+        height: consolePane.width < 740 ? 64 : 80
         color: "#0e1621"
         border.color: "#1d2a3a"
         border.width: 1
@@ -136,6 +136,13 @@ Pane {
             }
             spacing: 12
 
+            ToolButton {
+                id: menuButton
+                text: "☰"
+                font.pixelSize: 24
+                Accessible.name: qsTr("Navigation")
+                onClicked: navigation.open()
+            }
             ColumnLayout {
                 Layout.fillWidth: true
                 spacing: 2
@@ -147,7 +154,7 @@ Pane {
                     color: "white"
                 }
                 Label {
-                    text: root.remoteHome ? qsTr("Play away from home") : qsTr("Play on your home network")
+                    text: Chiaki.settings.currentProfile || qsTr("Default profile")
                     font.pixelSize: 14
                     color: consolePane.secondaryTextColor
                 }
@@ -163,7 +170,8 @@ Pane {
             }
 
             Button {
-                text: Chiaki.settings.currentProfile || qsTr("Profiles")
+                visible: consolePane.width >= 700
+                text: qsTr("Profiles")
                 Accessible.name: qsTr("Switch profile")
                 Layout.maximumWidth: 170
                 flat: true
@@ -171,6 +179,7 @@ Pane {
             }
 
             Button {
+                visible: consolePane.width >= 580
                 text: qsTr("Add Console")
                 focusPolicy: Qt.NoFocus
                 onClicked: root.showManualHostDialog()
@@ -179,6 +188,7 @@ Pane {
 
             Button {
                 id: settingsButton
+                visible: consolePane.width >= 500
                 text: qsTr("Settings")
                 flat: true
                 focusPolicy: Qt.NoFocus
@@ -199,23 +209,27 @@ Pane {
         anchors.rightMargin: 24
         spacing: 12
 
-        TabBar {
-            id: routeTabs
+        ConnectionCard {
             Layout.fillWidth: true
-            Layout.maximumWidth: 420
-            currentIndex: root.remoteHome ? 1 : 0
-            TabButton {
-                text: qsTr("Local Connect")
-                onClicked: root.remoteHome = false
-            }
-            TabButton {
-                text: qsTr("Remote Connect")
-                onClicked: root.remoteHome = true
-            }
+            Layout.preferredWidth: 240
+            compact: consolePane.width < 700 || consolePane.height < 480
+            text: qsTr("Local Connect")
+            detail: qsTr("On your home network")
+            selected: !root.remoteHome
+            onClicked: root.remoteHome = false
         }
-        Item { Layout.fillWidth: true }
+        ConnectionCard {
+            Layout.fillWidth: true
+            Layout.preferredWidth: 240
+            compact: consolePane.width < 700 || consolePane.height < 480
+            text: qsTr("Remote Connect")
+            detail: qsTr("Over the internet")
+            selected: root.remoteHome
+            onClicked: root.remoteHome = true
+        }
         ComboBox {
             id: playMode
+            visible: consolePane.width > 550
             Accessible.name: qsTr("Session mode")
             implicitContentWidthPolicy: ComboBox.WidestText
             model: [qsTr("Video and audio"), qsTr("Video only"), qsTr("Audio only"), qsTr("Gamepad only")]
@@ -359,7 +373,7 @@ Pane {
 
                     Label {
                         Layout.fillWidth: true
-                        visible: !!modelData.app || (!!modelData.titleId && !modelData.duid)
+                        visible: !Chiaki.settings.streamerMode && (!!modelData.app || (!!modelData.titleId && !modelData.duid))
                         text: modelData.app ? qsTr("Now playing: %1").arg(modelData.app) : qsTr("Title ID: %1").arg(modelData.titleId)
                         color: "#7f90a5"
                         font.pixelSize: 13
@@ -465,6 +479,73 @@ Pane {
             textFormat: Text.PlainText
             elide: Text.ElideRight
             color: consolePane.secondaryTextColor
+        }
+    }
+
+    Drawer {
+        id: navigation
+        width: Math.min(310, consolePane.width * 0.85)
+        height: consolePane.height
+        modal: true
+        onOpened: localNav.forceActiveFocus()
+        onClosed: if (consolePane.StackView.status === StackView.Active) menuButton.forceActiveFocus()
+        background: Rectangle { color: "#111c29" }
+        contentItem: ScrollView {
+            clip: true
+            contentWidth: availableWidth
+            ColumnLayout {
+                width: parent.width
+                spacing: 4
+                Label {
+                    Layout.margins: 16
+                    text: qsTr("Remote Play")
+                    color: "#f0f7ff"
+                    font.pixelSize: 24
+                    font.weight: Font.DemiBold
+                }
+                ItemDelegate {
+                    id: localNav
+                    Layout.fillWidth: true
+                    text: qsTr("Local Connect")
+                    highlighted: !root.remoteHome
+                    onClicked: { root.remoteHome = false; navigation.close() }
+                }
+                ItemDelegate {
+                    Layout.fillWidth: true
+                    text: qsTr("Remote Connect")
+                    highlighted: root.remoteHome
+                    onClicked: { root.remoteHome = true; navigation.close() }
+                }
+                ItemDelegate {
+                    Layout.fillWidth: true
+                    text: qsTr("Add console")
+                    onClicked: { navigation.close(); root.showManualHostDialog() }
+                }
+                ItemDelegate {
+                    Layout.fillWidth: true
+                    text: qsTr("Profiles")
+                    onClicked: { navigation.close(); root.showProfileDialog() }
+                }
+                ItemDelegate {
+                    Layout.fillWidth: true
+                    text: qsTr("Display settings")
+                    onClicked: { navigation.close(); root.showDisplaySettingsDialog() }
+                }
+                ItemDelegate {
+                    Layout.fillWidth: true
+                    text: qsTr("Settings")
+                    onClicked: { navigation.close(); root.showSettingsDialog() }
+                }
+                ComboBox {
+                    Layout.fillWidth: true
+                    Layout.margins: 12
+                    visible: !playMode.visible
+                    Accessible.name: qsTr("Session mode")
+                    model: playMode.model
+                    currentIndex: Chiaki.settings.audioVideoDisabled
+                    onActivated: index => Chiaki.settings.audioVideoDisabled = index
+                }
+            }
         }
     }
 

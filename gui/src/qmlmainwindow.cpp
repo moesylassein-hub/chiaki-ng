@@ -31,6 +31,7 @@ extern "C" {
 #include <QCoreApplication>
 #include <QGuiApplication>
 #include <QFile>
+#include <QFileInfo>
 #include <QWidget>
 #include <QLabel>
 #include <QVBoxLayout>
@@ -2589,6 +2590,11 @@ QmlMainWindow::~QmlMainWindow()
     }
 #endif
 
+    pl_mpv_user_shader_destroy(&fsr_hook);
+    pl_mpv_user_shader_destroy(&fsrcnnx_hook_8);
+    pl_mpv_user_shader_destroy(&fsrcnnx_hook_16);
+    pl_mpv_user_shader_destroy(&video_shader_hook);
+
     if (pl_gpu gpu = placeboGpu()) {
         pl_unmap_avframe(gpu, &direct_frame);
         if (quick_tex)
@@ -2660,9 +2666,6 @@ QmlMainWindow::~QmlMainWindow()
     delete qt_gl_offscreen_surface;
     delete qt_gl_context;
     pl_options_free(&renderparams_opts);
-    pl_mpv_user_shader_destroy(&fsr_hook);
-    pl_mpv_user_shader_destroy(&fsrcnnx_hook_8);
-    pl_mpv_user_shader_destroy(&fsrcnnx_hook_16);
     pl_log_destroy(&placebo_log);
 }
 
@@ -2847,6 +2850,7 @@ void QmlMainWindow::setVideoPreset(VideoPreset preset)
 void QmlMainWindow::setSettings(Settings *new_settings)
 {
     settings = new_settings;
+    reloadVideoShader();
     QString profile = settings->GetCurrentProfile();
     qCCritical(chiakiGui) << "Current Profile: " << profile;
     if(profile.isEmpty())
@@ -5264,6 +5268,8 @@ renderer_backend_ready:
         break;
     }
     setZoomFactor(settings->GetZoomFactor());
+    if (!settings->GetLocalVideoShader().isEmpty())
+        reloadVideoShader();
 }
 
 void QmlMainWindow::drainRenderThread()
@@ -5774,6 +5780,90 @@ void QmlMainWindow::drainDeferredSwaps()
     if (deferred_swap_thread)
         deferred_swap_thread->drain();
     finalizeDeferredPresentIfIdle();
+}
+
+static constexpr qsizetype max_video_shader_bytes = 4 * 1024 * 1024;
+
+void QmlMainWindow::importVideoShader(const QUrl &url)
+{
+    if (video_shader_busy)
+        return;
+    QFile file(url.toLocalFile());
+    const QFileInfo info(file);
+    if (!url.isLocalFile() || !info.isFile() || info.size() > max_video_shader_bytes ||
+        !file.open(QIODevice::ReadOnly)) {
+        video_shader_status = tr("Choose a readable local shader file up to 4 MiB.");
+        emit videoShaderChanged();
+        return;
+    }
+    const QByteArray source = file.read(max_video_shader_bytes + 1);
+    if (file.error() != QFileDevice::NoError || source.size() > max_video_shader_bytes ||
+        source.contains('\0') || !source.contains("//!HOOK ")) {
+        video_shader_status = tr("This file does not contain a supported mpv shader hook.");
+        emit videoShaderChanged();
+        return;
+    }
+    queueVideoShader({{"name", info.fileName()}, {"source", source}}, false);
+}
+
+void QmlMainWindow::clearVideoShader()
+{
+    queueVideoShader({}, false);
+}
+
+void QmlMainWindow::reloadVideoShader()
+{
+    video_shader_name.clear();
+    queueVideoShader(settings->GetLocalVideoShader(), true);
+}
+
+void QmlMainWindow::queueVideoShader(const QVariantMap &shader, bool restore)
+{
+    const quint64 generation = video_shader_generation.fetchAndAddOrdered(1) + 1;
+    video_shader_busy = true;
+    video_shader_status = shader.isEmpty() ? QString() : tr("Loading shader…");
+    emit videoShaderChanged();
+
+    // GPU objects belong to the same thread that consumes the hook at presentation.
+    QMetaObject::invokeMethod(quick_render, [this, shader, restore, generation]() {
+        if (video_shader_generation.loadAcquire() != generation)
+            return;
+        const QByteArray source = shader.value("source").toByteArray();
+        const pl_hook *replacement = nullptr;
+        if (!source.isEmpty() && source.size() <= max_video_shader_bytes) {
+            replacement = pl_mpv_user_shader_parse(placeboGpu(), source.constData(), source.size());
+            if (replacement && !replacement->stages)
+                pl_mpv_user_shader_destroy(&replacement);
+        }
+        if (video_shader_generation.loadAcquire() != generation) {
+            pl_mpv_user_shader_destroy(&replacement);
+            return;
+        }
+        const bool accepted = shader.isEmpty() || replacement;
+        if (accepted || restore) {
+            pl_renderer_flush_cache(placebo_renderer);
+            pl_mpv_user_shader_destroy(&video_shader_hook);
+            video_shader_hook = replacement;
+        }
+        active_shader_generation = generation;
+        QMetaObject::invokeMethod(this, [this, generation, shader, accepted, restore]() {
+            if (video_shader_generation.loadAcquire() != generation)
+                return;
+            video_shader_busy = false;
+            if (accepted) {
+                if (!restore)
+                    settings->SetLocalVideoShader(shader);
+                video_shader_name = shader.value("name").toString();
+                video_shader_status.clear();
+            } else {
+                video_shader_status = tr("The renderer could not load this shader.");
+                if (restore)
+                    settings->SetLocalVideoShader({});
+            }
+            emit videoShaderChanged();
+            scheduleUpdate(true, UpdateRequestReason::SceneChanged);
+        }, Qt::QueuedConnection);
+    }, Qt::QueuedConnection);
 }
 
 void QmlMainWindow::updatePlacebo()
@@ -7342,6 +7432,12 @@ void QmlMainWindow::render()
         pl_rect2df crop = hint_frame->crop;
         switch (video_mode) {
         case VideoMode::Normal:
+#if PL_API_VER >= 355
+            if (settings->GetAmbientBorder()) {
+                params.border = PL_CLEAR_BLUR;
+                params.blur_radius = 32.0f;
+            }
+#endif
             pl_rect2df_aspect_copy(&target_frame.crop, &crop, 0.0);
             break;
         case VideoMode::Stretch:
@@ -7377,10 +7473,17 @@ void QmlMainWindow::render()
                                                fsr_hook, fsrcnnx_hook_8, fsrcnnx_hook_16);
         }
     }
-    const struct pl_hook *active_hooks[] = {fsrcnnx_hook};
-    if (fsrcnnx_hook) {
+    const struct pl_hook *active_hooks[2];
+    int hook_count = 0;
+    if (fsrcnnx_hook)
+        active_hooks[hook_count++] = fsrcnnx_hook;
+    if (video_shader_hook)
+        active_hooks[hook_count++] = video_shader_hook;
+    if (hook_count) {
         params.hooks = active_hooks;
-        params.num_hooks = 1;
+        params.num_hooks = hook_count;
+    }
+    if (fsrcnnx_hook) {
         switch (video_preset) {
         case VideoPreset::HighQualitySpatial:
             if (fsrcnnx_hook == fsr_hook)
@@ -7468,6 +7571,24 @@ void QmlMainWindow::render()
             logLatencyStats("render_image", render_after_us - render_call_begin_us);
             if (render_entry_us_local > 0 && render_after_us >= render_entry_us_local)
                 logLatencyStats("render_work", render_after_us - render_entry_us_local);
+        }
+    }
+    if (video_shader_hook) {
+        const auto errors = pl_renderer_get_errors(placebo_renderer);
+        for (int i = 0; i < errors.num_disabled_hooks; ++i) {
+            if (errors.disabled_hooks[i] != video_shader_hook->signature)
+                continue;
+            const quint64 generation = active_shader_generation;
+            pl_mpv_user_shader_destroy(&video_shader_hook);
+            QMetaObject::invokeMethod(this, [this, generation]() {
+                if (generation != video_shader_generation.loadAcquire())
+                    return;
+                settings->SetLocalVideoShader({});
+                video_shader_name.clear();
+                video_shader_status = tr("The GPU rejected this shader. Video effects have reverted to the stream preset.");
+                emit videoShaderChanged();
+            }, Qt::QueuedConnection);
+            break;
         }
     }
     close_started_frame(true);

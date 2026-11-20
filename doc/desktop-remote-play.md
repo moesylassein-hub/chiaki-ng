@@ -10,6 +10,10 @@ The session mode next to the connection tabs controls the next connection. **Gam
 | Console text entry | Settings → General | Enable before connecting. When the console requests text, a desktop window lets you edit it, send it or cancel. Game input resumes when it closes. |
 | Recent games | Settings → General | Optionally remember up to four titles seen by local discovery on each registered console. Streamer mode hides the history and pauses collection. Turning the option off clears this profile’s history. |
 
+**Display settings** is available from the home navigation menu and the stream overlay. Turn on **Ambient blur** to fill screen borders with a blurred copy of the current game while keeping its aspect ratio. Choose **Load shader** to apply an mpv-format GLSL hook alongside the selected upscaler. Shaders are saved per profile on this machine. **Remove** restores the stream preset.
+
+For portable settings, start `chiaki.exe --settings-dir .\profiles` from the extracted folder. The app creates a separate configuration there, including console registrations. Keep that directory private.
+
 ## Windows feature coverage
 
 | Capability | Status in this fork |

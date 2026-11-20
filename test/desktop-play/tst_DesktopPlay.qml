@@ -50,6 +50,23 @@ TestCase {
         }
     }
 
+    Component {
+        id: connectionCard
+        Desktop.ConnectionCard { text: "Remote Connect"; detail: "Over the internet"; selected: false }
+    }
+
+    function test_connectionCard() {
+        const card = createTemporaryObject(connectionCard, tests)
+        verify(card !== null)
+        compare(card.Accessible.checked, false)
+        card.selected = true
+        compare(card.Accessible.checked, true)
+        const fullHeight = card.implicitHeight
+        card.compact = true
+        verify(card.implicitHeight < fullHeight)
+        compare(card.Accessible.description, "Over the internet")
+    }
+
     function test_connectionRoutes() {
         const hosts = [
             {routeId: "lan", display: true, discovered: true, duid: "registration"},
