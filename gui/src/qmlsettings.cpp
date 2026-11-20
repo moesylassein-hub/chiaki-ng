@@ -511,6 +511,50 @@ void QmlSettings::setDisplayTargetPrim(int prim)
     emit displayTargetPrimChanged();
 }
 
+int QmlSettings::homeBackground() const
+{
+    return settings->GetHomeBackground();
+}
+
+void QmlSettings::setHomeBackground(int value)
+{
+    settings->SetHomeBackground(value);
+    emit homeBackgroundChanged();
+}
+
+bool QmlSettings::hideLinkTile() const
+{
+    return settings->GetHideLinkTile();
+}
+
+void QmlSettings::setHideLinkTile(bool value)
+{
+    settings->SetHideLinkTile(value);
+    emit hideLinkTileChanged();
+}
+
+bool QmlSettings::showGameShelf() const
+{
+    return settings->GetShowGameShelf();
+}
+
+void QmlSettings::setShowGameShelf(bool value)
+{
+    settings->SetShowGameShelf(value);
+    emit showGameShelfChanged();
+}
+
+bool QmlSettings::showWakeAction() const
+{
+    return settings->GetShowWakeAction();
+}
+
+void QmlSettings::setShowWakeAction(bool value)
+{
+    settings->SetShowWakeAction(value);
+    emit showWakeActionChanged();
+}
+
 bool QmlSettings::motionInterpolation() const
 {
     return settings->GetMotionInterpolation();
@@ -1900,6 +1944,10 @@ void QmlSettings::setSettings(Settings *new_settings)
 
 void QmlSettings::refreshAllKeys()
 {
+    emit homeBackgroundChanged();
+    emit hideLinkTileChanged();
+    emit showGameShelfChanged();
+    emit showWakeActionChanged();
     emit motionInterpolationChanged();
     emit ambientBorderChanged();
     emit remotePlayAskChanged();

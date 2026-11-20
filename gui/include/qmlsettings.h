@@ -39,6 +39,10 @@ class QmlSettings : public QObject
     Q_PROPERTY(int displayTargetContrast READ displayTargetContrast WRITE setDisplayTargetContrast NOTIFY displayTargetContrastChanged)
     Q_PROPERTY(int displayTargetPeak READ displayTargetPeak WRITE setDisplayTargetPeak NOTIFY displayTargetPeakChanged)
     Q_PROPERTY(int displayTargetPrim READ displayTargetPrim WRITE setDisplayTargetPrim NOTIFY displayTargetPrimChanged)
+    Q_PROPERTY(int homeBackground READ homeBackground WRITE setHomeBackground NOTIFY homeBackgroundChanged)
+    Q_PROPERTY(bool hideLinkTile READ hideLinkTile WRITE setHideLinkTile NOTIFY hideLinkTileChanged)
+    Q_PROPERTY(bool showGameShelf READ showGameShelf WRITE setShowGameShelf NOTIFY showGameShelfChanged)
+    Q_PROPERTY(bool showWakeAction READ showWakeAction WRITE setShowWakeAction NOTIFY showWakeActionChanged)
     Q_PROPERTY(bool motionInterpolation READ motionInterpolation WRITE setMotionInterpolation NOTIFY motionInterpolationChanged)
     Q_PROPERTY(bool ambientBorder READ ambientBorder WRITE setAmbientBorder NOTIFY ambientBorderChanged)
     Q_PROPERTY(int displayTargetTrc READ displayTargetTrc WRITE setDisplayTargetTrc NOTIFY displayTargetTrcChanged)
@@ -205,6 +209,14 @@ public:
     int displayTargetPrim() const;
     void setDisplayTargetPrim(int prim);
 
+    int homeBackground() const;
+    void setHomeBackground(int value);
+    bool hideLinkTile() const;
+    void setHideLinkTile(bool value);
+    bool showGameShelf() const;
+    void setShowGameShelf(bool value);
+    bool showWakeAction() const;
+    void setShowWakeAction(bool value);
     bool motionInterpolation() const;
     void setMotionInterpolation(bool enabled);
     bool ambientBorder() const;
@@ -680,6 +692,10 @@ signals:
     void displayTargetPeakChanged();
     void displayTargetContrastChanged();
     void displayTargetPrimChanged();
+    void homeBackgroundChanged();
+    void hideLinkTileChanged();
+    void showGameShelfChanged();
+    void showWakeActionChanged();
     void motionInterpolationChanged();
     void ambientBorderChanged();
     void displayTargetTrcChanged();

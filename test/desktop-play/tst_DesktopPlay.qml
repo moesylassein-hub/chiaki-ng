@@ -98,6 +98,30 @@ TestCase {
         compare(Routes.indexOfRoute([], "psn"), -1)
     }
 
+    function test_savedConsolesStayVisibleOffline() {
+        const saved = [{name:"One", mac:"aa", ps5:true}, {name:"Two", mac:"bb", ps5:false}]
+        const routes = [{routeId:"address/1", registered:true, display:true, manual:true, mac:"aa"}]
+        const local = Routes.dashboardHosts(routes, saved, false)
+        compare(local.map(h => h.routeId), ["address/1", "registered/bb"])
+        verify(local[1].offline)
+        compare(Routes.dashboardHosts(routes, saved, true).length, 1)
+    }
+
+    function test_cardsGroupRoutesAndKeepUnmatchedAccountsSeparate() {
+        const saved = [{name:"One", mac:"aa", ps5:true}, {name:"Two", mac:"bb", ps5:false}]
+        const routes = [
+            {name:"One", mac:"aa", display:true, registered:true, discovered:true, routeId:"lan/aa", state:"ready", app:"Demo"},
+            {name:"One", display:true, registered:true, duid:"remote", routeId:"psn/1"},
+            {name:"Other", display:true, registered:true, duid:"separate", routeId:"psn/2"}
+        ]
+        const grouped = Routes.consoleCards(routes, saved)
+        compare(grouped.map(c => c.id), ["registered/aa", "registered/bb", "psn/2"])
+        compare(grouped[0].local.length, 1)
+        compare(grouped[0].remote.length, 1)
+        compare(grouped[0].app, "Demo")
+        compare(grouped[1].state, "offline")
+    }
+
     function test_presetsAreScoped() {
         const picker = createTemporaryObject(presetComponent, tests, {config: settings, scope: "RemotePS5"})
         verify(picker !== null)

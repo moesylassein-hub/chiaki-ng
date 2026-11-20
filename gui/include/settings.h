@@ -362,7 +362,15 @@ class Settings : public QObject
 		int GetDisplayTargetPeak() const;
 		void SetDisplayTargetPeak(int peak);
 
-		bool GetMotionInterpolation() const;
+		int GetHomeBackground() const;
+	void SetHomeBackground(int value);
+	bool GetHideLinkTile() const;
+	void SetHideLinkTile(bool value);
+	bool GetShowGameShelf() const;
+	void SetShowGameShelf(bool value);
+	bool GetShowWakeAction() const;
+	void SetShowWakeAction(bool value);
+	bool GetMotionInterpolation() const;
 	void SetMotionInterpolation(bool enabled);
 	bool GetAmbientBorder() const;
 	void SetAmbientBorder(bool enabled);

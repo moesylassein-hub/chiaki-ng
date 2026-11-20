@@ -1,8 +1,8 @@
 # Windows Remote Play
 
-Choose **Local Connect** for a console discovered on your network. Choose **Remote Connect** for a registered console linked to PSN. **Add Console** saves a manual address. Saved addresses can be used from either view. Use the left and right arrows to switch views and the up and down arrows to pick a console. Press Enter to connect. A registered console in rest mode offers **Wake and connect**.
+The home dashboard lists registered consoles, including consoles that are offline. **Link Console** opens registration. Select a console card to choose **Local Connect** or **Remote Connect**, its route and its session mode. Choose **Add address** when a saved console has no reachable route. The top toolbar opens the profile switcher, help, internet settings and settings. The overflow menu includes network discovery, adding a manual address and refreshing PSN consoles.
 
-The session mode next to the connection tabs controls the next connection. **Gamepad only** forwards controls while disabling audio and video playback. **Profiles** opens the profile switcher. With a named profile active, this button shows its name.
+**Gamepad only** forwards controls while disabling audio and video playback. Home background, the recent-games shelf, the wake action and the pairing tile can be customized under **Settings → General**.
 
 | Setting | Where to find it | What it does |
 | --- | --- | --- |

@@ -1226,6 +1226,46 @@ void Settings::SetDisplayTargetPeak(int peak)
 	settings.setValue("settings/display_target_peak", peak);
 }
 
+int Settings::GetHomeBackground() const
+{
+    return qBound(0, settings.value("settings/home_background", 1).toInt(), 2);
+}
+
+void Settings::SetHomeBackground(int value)
+{
+    settings.setValue("settings/home_background", qBound(0, value, 2));
+}
+
+bool Settings::GetHideLinkTile() const
+{
+    return settings.value("settings/hide_link_tile", false).toBool();
+}
+
+void Settings::SetHideLinkTile(bool value)
+{
+    settings.setValue("settings/hide_link_tile", value);
+}
+
+bool Settings::GetShowGameShelf() const
+{
+    return settings.value("settings/show_game_shelf", true).toBool();
+}
+
+void Settings::SetShowGameShelf(bool value)
+{
+    settings.setValue("settings/show_game_shelf", value);
+}
+
+bool Settings::GetShowWakeAction() const
+{
+    return settings.value("settings/show_wake_action", true).toBool();
+}
+
+void Settings::SetShowWakeAction(bool value)
+{
+    settings.setValue("settings/show_wake_action", value);
+}
+
 bool Settings::GetMotionInterpolation() const
 {
 	return settings.value("settings/motion_interpolation", false).toBool();

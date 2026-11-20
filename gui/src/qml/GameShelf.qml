@@ -32,17 +32,52 @@ ColumnLayout {
         Button {
             text: shelf.actionText
             flat: true
+            visible: shelf.games.length > 0
             enabled: !shelf.loading
             onClicked: shelf.requested()
         }
     }
+    Rectangle {
+        Layout.alignment: Qt.AlignHCenter
+        Layout.preferredWidth: Math.min(440, shelf.width)
+        implicitHeight: shelf.compact ? 125 : 155
+        visible: !shelf.games.length
+        radius: 21
+        color: "#64323c4b"
+        border.color: "#424e6073"
+        ColumnLayout {
+            anchors.fill: parent
+            anchors.margins: 12
+            spacing: 3
+            Rectangle {
+                Layout.alignment: Qt.AlignHCenter
+                implicitWidth: shelf.compact ? 34 : 45
+                implicitHeight: implicitWidth
+                radius: width/2; color: "#334254"
+                Label { anchors.centerIn: parent; text: "●"; color: "#ffbf26"; font.pixelSize: 24 }
+            }
+            Label {
+                Layout.fillWidth: true
+                horizontalAlignment: Text.AlignHCenter
+                text: shelf.message
+                wrapMode: Text.Wrap
+                color: "#f2f5fa"
+                font.weight: Font.DemiBold
+            }
+            Button {
+                Layout.alignment: Qt.AlignHCenter
+                enabled: !shelf.loading
+                text: shelf.actionText
+                flat: true
+                onClicked: shelf.requested()
+            }
+        }
+    }
     Label {
         Layout.fillWidth: true
-        visible: shelf.message.length > 0
+        visible: !!shelf.games.length && !!shelf.message
         text: shelf.message
         wrapMode: Text.Wrap
-        color: "#afbdcd"
-        font.pixelSize: 13
     }
     ListView {
         id: covers

@@ -15,6 +15,7 @@ DialogView {
         PS5
     }
     property int selectedConsole: SettingsDialog.Console.PS5
+    property alias section: bar.currentIndex
     property bool quitControllerMapping: true
     id: dialog
     title: qsTr("Settings")
@@ -602,6 +603,20 @@ DialogView {
                         Label {
 
                         }
+                        Label { Layout.alignment: Qt.AlignRight; text: qsTr("Home background") }
+                        C.ComboBox {
+                            Layout.columnSpan: 2
+                            model: [qsTr("Animated waves"), qsTr("Static waves"), qsTr("Plain")]
+                            currentIndex: Chiaki.settings.homeBackground
+                            onActivated: i => Chiaki.settings.homeBackground = i
+                        }
+                        Label { Layout.alignment: Qt.AlignRight; text: qsTr("Home screen") }
+                        C.CheckBox { Layout.columnSpan: 2; text: qsTr("Show recently played games from PSN"); checked: Chiaki.settings.showGameShelf; onToggled: Chiaki.settings.showGameShelf = checked }
+                        Item {}
+                        C.CheckBox { Layout.columnSpan: 2; text: qsTr("Hide the Link Console tile after pairing"); checked: Chiaki.settings.hideLinkTile; onToggled: Chiaki.settings.hideLinkTile = checked }
+                        Item {}
+                        C.CheckBox { Layout.columnSpan: 2; text: qsTr("Show the wake button on consoles"); checked: Chiaki.settings.showWakeAction; onToggled: Chiaki.settings.showWakeAction = checked }
+
                         Label {
                             Layout.alignment: Qt.AlignRight
                             text: qsTr("Recent games")
